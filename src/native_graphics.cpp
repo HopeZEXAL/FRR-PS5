@@ -44,9 +44,9 @@ namespace plume {
 #if defined(_WIN32)
 std::unique_ptr<RenderInterface> CreateD3D12Interface();
 std::unique_ptr<RenderInterface> CreateVulkanInterface();
-#elif defined(__ANDROID__) || defined(__APPLE__)
-// Swap chains take an ANativeWindow (Android) or a Cocoa window and its
-// CAMetalLayer (macOS, through MoltenVK).
+#elif defined(__ANDROID__) || defined(__APPLE__) || defined(__PROSPERO__)
+// Swap chains take an ANativeWindow (Android), a Cocoa window and its
+// CAMetalLayer (macOS, through MoltenVK), or the display (PS5).
 std::unique_ptr<RenderInterface> CreateVulkanInterface();
 #else
 std::unique_ptr<RenderInterface> CreateVulkanInterface(RenderWindow sdlWindow);
@@ -285,6 +285,18 @@ void NativeGraphics::initialize() {
     auto render_interface = backend == GraphicsBackend::vulkan ? plume::CreateVulkanInterface()
                             : backend == GraphicsBackend::d3d11 ? plume::CreateD3D11Interface()
                                                                 : plume::CreateD3D12Interface();
+#elif defined(__PROSPERO__)
+    // The PS5 has no windows, and SDL's PS5 video driver must not start: it
+    // opens VideoOut itself, which the Vulkan driver's display swap chain
+    // needs. Plume's instance is made without a window (its PS5 branch asks
+    // for VK_KHR_display and uses the linked RADV); the swap chain presents
+    // to the display (native_presentation.cpp).
+    SDL_Window* window = nullptr;
+    // SDL's event queue without its video: pump_events reads controllers
+    // through it, which on the desktop SDL video starts as a side effect.
+    if (SDL_InitSubSystem(SDL_INIT_EVENTS) != 0)
+        throw std::runtime_error(std::string("failed to start SDL events: ") + SDL_GetError());
+    auto render_interface = plume::CreateVulkanInterface();
 #else
 #if defined(__ANDROID__) || defined(SFR_IOS)
     // Landscape only, as the launcher asks (launcher_main.cpp). Without the

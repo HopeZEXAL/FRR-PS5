@@ -1670,7 +1670,10 @@ NativePresentation::NativePresentation(NativeGraphics& graphics, uint32_t width,
         implementation->wayland = driver && std::string_view(driver) == "wayland";
     }
 #endif
+#ifndef __PROSPERO__
+    // (The PS5 has none: the swap chain presents to the display.)
     if (!implementation->window) unavailable("window");
+#endif
 
 #ifdef __ANDROID__
     // Plume draws into the window's ANativeWindow on Android.
@@ -1691,6 +1694,11 @@ NativePresentation::NativePresentation(NativeGraphics& graphics, uint32_t width,
 #else
     plume::RenderWindow render_window{(void*)system.info.cocoa.window, SDL_Metal_GetLayer(view)};
 #endif
+#elif defined(__PROSPERO__)
+    // The display, through Plume's VK_KHR_display branch: {0, 0} asks for its
+    // 1920x1080 mode, and the swap chain takes the size of the mode it uses.
+    // The game still draws at width x height and the blit scales it in.
+    plume::RenderWindow render_window{};
 #else
     plume::RenderWindow render_window = implementation->window;
 #endif
@@ -2380,6 +2388,10 @@ void NativePresentation::present(uint32_t area_width, uint32_t area_height, floa
             RECT client{};
             const bool minimized = IsIconic(impl_->window) ||
                 (GetClientRect(impl_->window, &client) && (client.right <= 0 || client.bottom <= 0));
+#elif defined(__PROSPERO__)
+            // The display is never minimized (and there is no window to ask:
+            // its 0x0 would read as minimized, and every frame would wait).
+            const bool minimized = false;
 #else
             int window_width = 0, window_height = 0;
             SDL_GetWindowSize(impl_->window, &window_width, &window_height);

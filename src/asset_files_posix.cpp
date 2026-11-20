@@ -102,10 +102,19 @@ struct AssetFiles::Impl {
     mutable std::unordered_map<std::string, std::unordered_map<std::string, std::string>> listings;
 
     explicit Impl(const std::filesystem::path& path) {
+#ifdef __PROSPERO__
+        // A PS5 title is refused realpath (EPERM, like chdir), and its paths
+        // are absolute already (ps5_main.cpp): the root is the path itself,
+        // tidied, without a trailing slash.
+        if (!path.is_absolute()) throw std::runtime_error("asset files: the PS5 asset root must be absolute");
+        root = path.lexically_normal().string();
+        while (root.size() > 1 && root.back() == '/') root.pop_back();
+#else
         char* resolved = realpath(path.c_str(), nullptr);
         if (!resolved) native_error("mount asset root", errno);
         root = resolved;
         std::free(resolved);
+#endif
         struct stat info{};
         if (stat(root.c_str(), &info) != 0 || !S_ISDIR(info.st_mode))
             throw std::runtime_error("asset files: mount root must be a directory");

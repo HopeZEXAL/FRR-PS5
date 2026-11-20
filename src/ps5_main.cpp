@@ -27,13 +27,19 @@
 #include <iostream>
 #include <string>
 #include <system_error>
+#include <cerrno>
 
 int sfr_game_main(int argc, char** argv);
+// The boot tracer (ps5_boot_trace.c): /data/frr-ps5/boot-trace.txt.
+extern "C" void frr_boot_mark(const char* stage);
 extern "C" int sceKernelDebugOutText(int channel, const char* text);
 
 namespace {
 namespace fs = std::filesystem;
 const char* const root = "/data/frr-ps5";
+// Every path is absolute: a title cannot count on its working directory
+// (chdir into the data folder is tried, but build 1 stopped right after it).
+std::string at(const char* name) { return std::string(root) + "/" + name; }
 
 void klog(const std::string& line) {
     sceKernelDebugOutText(0, ("[frr] " + line + "\n").c_str());
@@ -62,7 +68,7 @@ void load_settings(const fs::path& path) {
 fs::path install_source() {
     if (const char* chosen = std::getenv("SFR_INSTALL_SOURCE"); chosen && *chosen) return chosen;
     std::error_code error;
-    for (const auto& entry : fs::directory_iterator(".", error)) {
+    for (const auto& entry : fs::directory_iterator(root, error)) {
         std::string extension = entry.path().extension().string();
         std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return char(std::tolower(c)); });
         if (entry.is_regular_file(error) && extension == ".iso") return entry.path();
@@ -74,7 +80,7 @@ fs::path install_source() {
 // when there is nothing to play.
 bool ensure_installed() {
     std::error_code error;
-    if (fs::is_directory("game/image", error) && fs::is_directory("game/assets", error)) return true;
+    if (fs::is_directory(at("game/image"), error) && fs::is_directory(at("game/assets"), error)) return true;
     const fs::path source = install_source();
     if (source.empty()) {
         std::cerr << "PS5_INSTALL missing: copy your Sonic Free Riders disc image (.iso) to " << root << '\n';
@@ -92,7 +98,7 @@ bool ensure_installed() {
     const auto start = std::chrono::steady_clock::now();
     int reported = -1;
     try {
-        sfr::install_game(source, "game", [&](sfr::InstallStage stage, uint64_t done, uint64_t total, const std::string& item) {
+        sfr::install_game(source, at("game"), [&](sfr::InstallStage stage, uint64_t done, uint64_t total, const std::string& item) {
             const int percent = total ? int(done * 100 / total) : 0;
             if (percent / 5 != reported / 5) {
                 reported = percent;
@@ -115,29 +121,43 @@ bool ensure_installed() {
 }  // namespace
 
 int main() {
+    frr_boot_mark("main (every static initialiser finished)");
     mkdir(root, 0777);
-    if (chdir(root) != 0) {
-        klog("cannot enter /data/frr-ps5");
-        return 1;
-    }
-    if (!std::freopen("game.log", "w", stderr)) klog("cannot write /data/frr-ps5/game.log");
+    const bool entered = chdir(root) == 0;
+    const int chdir_error = entered ? 0 : errno;
+    frr_boot_mark(entered ? "chdir /data/frr-ps5 ok" : "chdir /data/frr-ps5 refused (absolute paths only)");
+    if (!std::freopen(at("game.log").c_str(), "w", stderr)) klog("cannot write /data/frr-ps5/game.log");
     std::setvbuf(stderr, nullptr, _IOLBF, 1 << 16);  // whole lines, so a crash keeps the trace
-    std::cerr << "PS5_START root=" << root << '\n';
+    std::cerr << "PS5_START root=" << root << " chdir=" << (entered ? "ok" : "refused errno=" + std::to_string(chdir_error)) << '\n';
+    frr_boot_mark("game.log open");
 
-    load_settings("settings.env");
-    // Defaults, under the data folder (a title's own folder is read-only).
-    setenv("SFR_SHADER_PACK", "shaders.pack", 0);
-    setenv("SFR_SAVE_DIRECTORY", "save", 0);
+    load_settings(at("settings.env"));
+    // Defaults, under the data folder (a title's own folder is read-only),
+    // as absolute paths for every relative default the game has.
+    setenv("SFR_SHADER_PACK", at("shaders.pack").c_str(), 0);
+    setenv("SFR_SAVE_DIRECTORY", at("save").c_str(), 0);
+    setenv("SFR_RUNTIME_SHADER_CACHE", at("out/shaders/runtime").c_str(), 0);
+    setenv("SFR_PIPELINE_CACHE_PATH", at("pipeline-cache/vulkan.bin").c_str(), 0);
+    setenv("SFR_PIPELINE_MANIFEST_LOCAL", at("pipeline-cache/vulkan.manifest").c_str(), 0);
+    std::error_code made;
+    fs::create_directories(at("pipeline-cache"), made);
+    fs::create_directories(at("save"), made);
 
+    frr_boot_mark("checking the installation");
     if (!ensure_installed()) {
+        frr_boot_mark("nothing to play (see game.log)");
         std::cerr.flush();
         return 1;
     }
     const char* region = std::getenv("SFR_GAME_REGION");
     std::string region_argument = std::string("--game-region=") + (region && *region ? region : "ntsc-us");
-    char program[] = "FreeRiders", image[] = "game/image", assets[] = "game/assets";
+    std::string image_path = at("game/image"), assets_path = at("game/assets");
+    char program[] = "FreeRiders";
+    char* image = image_path.data();
+    char* assets = assets_path.data();
     char* arguments[] = {program, image, assets, region_argument.data(), nullptr};
     std::cerr << "PS5_GAME starting\n";
+    frr_boot_mark("starting the game");
     klog("starting the game (log: /data/frr-ps5/game.log)");
     const int code = sfr_game_main(4, arguments);
     std::cerr << "PS5_GAME exited code=" << code << '\n';

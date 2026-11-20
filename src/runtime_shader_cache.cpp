@@ -111,10 +111,12 @@ void run(const std::vector<fs::path>& arguments, const fs::path& log, const char
     for (const auto& argument : arguments) command += L"\"" + argument.wstring() + L"\" ";
     command += L"> \"" + log.wstring() + L"\" 2>&1\"";
     if (_wsystem(command.c_str()) != 0) {
-#elif defined(SFR_IOS)
-    // iOS starts no other programs: its shaders come from shaders.pack alone.
+#elif defined(SFR_IOS) || defined(__PROSPERO__)
+    // iOS and the PS5 start no other programs: their shaders come from
+    // shaders.pack alone. A shader missing from it is still created, empty,
+    // and its original.bin stays in the runtime cache for an offline pack.
     (void)arguments;
-    failed(std::string(what) + " cannot run on iOS; a shader missing from shaders.pack cannot be made");
+    failed(std::string(what) + " cannot run here; a shader missing from shaders.pack cannot be made");
     {
 #else
     const auto quoted = [](const std::string& text) {

@@ -26,6 +26,19 @@
 #include <utility>
 #include <vector>
 
+#ifdef __PROSPERO__
+// The PS5 is FreeBSD underneath: a processor set is a cpuset_t, the thread
+// calls are the same pthread_*affinity_np (pthread_np.h, in libkernel), and
+// the process's own set comes from cpuset_getaffinity.
+#include <pthread_np.h>
+#include <sys/cpuset.h>
+using cpu_set_t = cpuset_t;
+namespace {
+int sched_getaffinity(pid_t, size_t size, cpu_set_t* set) {
+    return cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, -1, size, set);
+}
+}
+#endif
 #ifdef __APPLE__
 // macOS cannot pin a thread to a processor. The processor a thread was given
 // is remembered (so it reads back as on Linux) but only guides the scheduler

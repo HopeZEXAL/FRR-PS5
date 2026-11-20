@@ -127,7 +127,10 @@ int main() {
     const int chdir_error = entered ? 0 : errno;
     frr_boot_mark(entered ? "chdir /data/frr-ps5 ok" : "chdir /data/frr-ps5 refused (absolute paths only)");
     if (!std::freopen(at("game.log").c_str(), "w", stderr)) klog("cannot write /data/frr-ps5/game.log");
-    std::setvbuf(stderr, nullptr, _IOLBF, 1 << 16);  // whole lines, so a crash keeps the trace
+    std::setvbuf(stderr, nullptr, _IONBF, 0);  // unbuffered, so a crash keeps every line
+    // SDL's PS5 video driver opens VideoOut, which the renderer owns: if
+    // anything starts SDL video it gets the dummy driver instead.
+    setenv("SDL_VIDEODRIVER", "dummy", 1);
     std::cerr << "PS5_START root=" << root << " chdir=" << (entered ? "ok" : "refused errno=" + std::to_string(chdir_error)) << '\n';
     frr_boot_mark("game.log open");
 

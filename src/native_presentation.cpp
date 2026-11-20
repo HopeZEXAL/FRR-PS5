@@ -2351,6 +2351,8 @@ std::pair<uint32_t, uint32_t> primary_display_size() {
         if (r.right > r.left && r.bottom > r.top) return {uint32_t(r.right - r.left), uint32_t(r.bottom - r.top)};
     }
     return {0, 0};
+#elif defined(__PROSPERO__)
+    return {1920, 1080};
 #else
     if (!SDL_WasInit(SDL_INIT_VIDEO) && SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) return {0, 0};
     SDL_DisplayMode mode{};

@@ -28,6 +28,11 @@ DisplayMode query_native_display_mode() {
         mode.interlaced)
         throw RuntimeStop("native-display", 0, "native display mode is invalid or unsupported");
     return mode;
+#elif defined(__PROSPERO__)
+    // SDL's PS5 video driver must not start (it opens VideoOut, which the
+    // renderer owns): the console's output is 1080p at 60 Hz, the mode the
+    // renderer's display surface picks.
+    return {1920, 1080, 60.0f, false};
 #else
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0)
         throw RuntimeStop("native-display", 0, "cannot open the SDL video subsystem");

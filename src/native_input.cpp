@@ -438,6 +438,15 @@ struct SdlPads {
     }
 };
 
+// SDL's PS5 driver leaves Back unmapped (the Create button belongs to the
+// system), so the touchpad click stands in for it there, as PlayStation ports
+// of Xbox games usually do: menus and the Kinect pose that rests on Back need it.
+#ifdef __PROSPERO__
+constexpr SDL_GameControllerButton pad_back_button = SDL_CONTROLLER_BUTTON_TOUCHPAD;
+#else
+constexpr SDL_GameControllerButton pad_back_button = SDL_CONTROLLER_BUTTON_BACK;
+#endif
+
 GamepadState read_sdl_pad(SDL_GameController* pad) {
     static const std::pair<SDL_GameControllerButton, uint16_t> buttons[] = {
         {SDL_CONTROLLER_BUTTON_DPAD_UP, gamepad_button::dpad_up},
@@ -445,7 +454,7 @@ GamepadState read_sdl_pad(SDL_GameController* pad) {
         {SDL_CONTROLLER_BUTTON_DPAD_LEFT, gamepad_button::dpad_left},
         {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, gamepad_button::dpad_right},
         {SDL_CONTROLLER_BUTTON_START, gamepad_button::start},
-        {SDL_CONTROLLER_BUTTON_BACK, gamepad_button::back},
+        {pad_back_button, gamepad_button::back},
         {SDL_CONTROLLER_BUTTON_LEFTSTICK, gamepad_button::left_thumb},
         {SDL_CONTROLLER_BUTTON_RIGHTSTICK, gamepad_button::right_thumb},
         {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, gamepad_button::left_shoulder},

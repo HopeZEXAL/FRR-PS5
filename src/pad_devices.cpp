@@ -120,6 +120,14 @@ uint64_t pad_with_name(const std::string& name, std::span<const PadDevice> devic
     }
     return found;
 }
+// SDL's PS5 driver leaves Back unmapped (the Create button belongs to the
+// system), so the touchpad click stands in for it there, as PlayStation ports
+// of Xbox games usually do: menus and the Kinect pose that rests on Back need it.
+#if defined(__PROSPERO__)
+constexpr SDL_GameControllerButton pad_back_button = SDL_CONTROLLER_BUTTON_TOUCHPAD;
+#elif !defined(_WIN32)
+constexpr SDL_GameControllerButton pad_back_button = SDL_CONTROLLER_BUTTON_BACK;
+#endif
 
 std::vector<PadSample> poll_pad_buttons() {
     std::vector<PadSample> samples;
@@ -146,7 +154,7 @@ std::vector<PadSample> poll_pad_buttons() {
             {SDL_CONTROLLER_BUTTON_X, gamepad_button::x}, {SDL_CONTROLLER_BUTTON_Y, gamepad_button::y},
             {SDL_CONTROLLER_BUTTON_LEFTSHOULDER, gamepad_button::left_shoulder},
             {SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, gamepad_button::right_shoulder},
-            {SDL_CONTROLLER_BUTTON_START, gamepad_button::start}, {SDL_CONTROLLER_BUTTON_BACK, gamepad_button::back},
+            {SDL_CONTROLLER_BUTTON_START, gamepad_button::start}, {pad_back_button, gamepad_button::back},
             {SDL_CONTROLLER_BUTTON_LEFTSTICK, gamepad_button::left_thumb}, {SDL_CONTROLLER_BUTTON_RIGHTSTICK, gamepad_button::right_thumb},
             {SDL_CONTROLLER_BUTTON_DPAD_UP, gamepad_button::dpad_up}, {SDL_CONTROLLER_BUTTON_DPAD_DOWN, gamepad_button::dpad_down},
             {SDL_CONTROLLER_BUTTON_DPAD_LEFT, gamepad_button::dpad_left}, {SDL_CONTROLLER_BUTTON_DPAD_RIGHT, gamepad_button::dpad_right}};

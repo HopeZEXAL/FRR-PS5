@@ -5,6 +5,7 @@
 #include <mutex>
 #include <thread>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <utility>
 #ifdef _WIN32
@@ -26,6 +27,225 @@
 #include <ucontext.h>
 #endif
 #include <unistd.h>
+#endif
+
+#ifdef SFR_PS5_MEMORY
+#if defined(__PROSPERO__)
+// libkernel (declared here so the stock payload SDK, which has the stubs but
+// not the PS5 SDK fork's ps5platform/kernel.h, builds this file too).
+extern "C" {
+int32_t sceKernelReserveVirtualRange(void** address, size_t length, int flags, size_t alignment);
+int32_t sceKernelMunmap(void* address, size_t length);
+int32_t sceKernelMprotect(const void* address, size_t length, int protection);
+int32_t sceKernelAllocateDirectMemory(int64_t search_start, int64_t search_end, size_t length,
+                                      size_t alignment, int memory_type, int64_t* physical_start);
+int32_t sceKernelReleaseDirectMemory(int64_t start, size_t length);
+int32_t sceKernelMapDirectMemory(void** address, size_t length, int protection, int flags,
+                                 int64_t direct_start, size_t alignment);
+int64_t sceKernelGetDirectMemorySize(void);
+}
+#endif
+
+namespace sfr::ps5vm {
+namespace {
+constexpr int prot_read = 0x01, prot_write = 0x02;  // CPU read/write, as POSIX's
+constexpr int map_fixed = 0x10;                      // FreeBSD's MAP_FIXED
+#if defined(__PROSPERO__)
+constexpr int direct_type_cpu = 12;                  // the type titles' CPU memory uses
+#endif
+
+bool outside_gpu_window(uintptr_t base, size_t size) {
+    return base >= gpu_window_high || base + size <= gpu_window_low;
+}
+
+#if defined(__PROSPERO__)
+int32_t kernel_reserve(void** at, size_t size, int flags) {
+    return sceKernelReserveVirtualRange(at, size, flags, page_size);
+}
+int32_t kernel_unmap(void* at, size_t size) { return sceKernelMunmap(at, size); }
+int32_t kernel_protect(void* at, size_t size, int protection) { return sceKernelMprotect(at, size, protection); }
+int32_t kernel_allocate(int64_t* direct) {
+    return sceKernelAllocateDirectMemory(0, sceKernelGetDirectMemorySize(), page_size, page_size,
+                                         direct_type_cpu, direct);
+}
+int32_t kernel_release(int64_t direct) { return sceKernelReleaseDirectMemory(direct, page_size); }
+int32_t kernel_map(void* at, int64_t direct) {
+    void* mapped = at;
+    const int32_t result = sceKernelMapDirectMemory(&mapped, page_size, prot_read | prot_write, map_fixed,
+                                                    direct, page_size);
+    if (result == 0 && mapped != at) {
+        sceKernelMunmap(mapped, page_size);
+        return -1;
+    }
+    return result;
+}
+#else
+// The simulation: real host mappings (so stray accesses fault as on the
+// console) plus a ledger of which pages are backed, checked on every call.
+// Misuse aborts, loudly, so a host test run cannot pass over it.
+struct Ledger {
+    std::mutex mutex;
+    std::vector<std::pair<uintptr_t, size_t>> reservations;
+    std::vector<std::pair<uintptr_t, int64_t>> backed;  // page, direct start
+    int64_t next_direct = 0x100000;
+    std::vector<int64_t> allocated;
+};
+Ledger& ledger() {
+    static Ledger instance;
+    return instance;
+}
+[[noreturn]] void misuse(const char* what, const void* at) {
+    std::fprintf(stderr, "PS5_MEMORY_SIM misuse: %s at %p\n", what, at);
+    std::abort();
+}
+bool reserved(Ledger& l, uintptr_t at, size_t size) {
+    return std::any_of(l.reservations.begin(), l.reservations.end(), [&](const auto& r) {
+        return at >= r.first && at + size <= r.first + r.second;
+    });
+}
+auto find_backed(Ledger& l, uintptr_t page) {
+    return std::find_if(l.backed.begin(), l.backed.end(), [&](const auto& b) { return b.first == page; });
+}
+int32_t kernel_reserve(void** at, size_t size, int flags) {
+    Ledger& l = ledger();
+    std::lock_guard lock(l.mutex);
+    if (flags & map_fixed) {
+        // Putting one page back after unback: it must be inside a reservation
+        // and no longer backed.
+        const auto page = uintptr_t(*at);
+        if (!reserved(l, page, size) || find_backed(l, page) != l.backed.end())
+            misuse("fixed re-reserve outside a reservation or over a backed page", *at);
+        return mmap(*at, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) == *at ? 0 : -1;
+    }
+    void* p = mmap(*at, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) return -1;
+    l.reservations.push_back({uintptr_t(p), size});
+    *at = p;
+    return 0;
+}
+int32_t kernel_unmap(void* at, size_t size) {
+    Ledger& l = ledger();
+    std::lock_guard lock(l.mutex);
+    const auto reservation = std::find_if(l.reservations.begin(), l.reservations.end(), [&](const auto& r) {
+        return r.first == uintptr_t(at) && r.second == size;
+    });
+    if (reservation != l.reservations.end()) {
+        // Freeing a whole reservation: nothing in it may still be backed.
+        for (const auto& b : l.backed)
+            if (b.first >= reservation->first && b.first < reservation->first + reservation->second)
+                misuse("reservation freed with a page still backed", reinterpret_cast<void*>(b.first));
+        l.reservations.erase(reservation);
+        return munmap(at, size);
+    }
+    // Unmapping one backed page.
+    if (size != page_size || find_backed(l, uintptr_t(at)) == l.backed.end())
+        misuse("unmap of a page that is not backed", at);
+    return munmap(at, size);
+}
+int32_t kernel_protect(void* at, size_t size, int protection) {
+    Ledger& l = ledger();
+    std::lock_guard lock(l.mutex);
+    // The console cannot make reserved-only memory usable: every page of the
+    // range must be backed. (Kernel pages are 16 KiB; the backend protects in
+    // 4 KiB guest pages inside backed 64 KiB pages, which the console allows.)
+    for (uintptr_t page = uintptr_t(at) / page_size * page_size; page < uintptr_t(at) + size; page += page_size)
+        if (find_backed(l, page) == l.backed.end())
+            misuse("protect over a page with no memory behind it", reinterpret_cast<void*>(page));
+    return mprotect(at, size, protection);
+}
+int32_t kernel_allocate(int64_t* direct) {
+    Ledger& l = ledger();
+    std::lock_guard lock(l.mutex);
+    *direct = l.next_direct;
+    l.next_direct += int64_t(page_size);
+    l.allocated.push_back(*direct);
+    return 0;
+}
+int32_t kernel_release(int64_t direct) {
+    Ledger& l = ledger();
+    std::lock_guard lock(l.mutex);
+    const auto it = std::find(l.allocated.begin(), l.allocated.end(), direct);
+    if (it == l.allocated.end()) misuse("release of direct memory that is not allocated", nullptr);
+    if (std::any_of(l.backed.begin(), l.backed.end(), [&](const auto& b) { return b.second == direct; }))
+        misuse("release of direct memory that is still mapped", nullptr);
+    l.allocated.erase(it);
+    return 0;
+}
+int32_t kernel_map(void* at, int64_t direct) {
+    Ledger& l = ledger();
+    std::lock_guard lock(l.mutex);
+    const auto page = uintptr_t(at);
+    if (page % page_size || !reserved(l, page, page_size)) misuse("map outside a reservation", at);
+    if (find_backed(l, page) != l.backed.end()) misuse("map over a page that is already backed", at);
+    if (std::find(l.allocated.begin(), l.allocated.end(), direct) == l.allocated.end())
+        misuse("map of direct memory that is not allocated", at);
+    if (mmap(at, page_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != at)
+        return -1;
+    // Direct memory is not zeroed by the console: arrive with garbage.
+    std::memset(at, 0xCD, page_size);
+    l.backed.push_back({page, direct});
+    return 0;
+}
+// unback's unmap and the ledger: drop the page from "backed" once unmapped.
+void forget_backed(void* at) {
+    Ledger& l = ledger();
+    std::lock_guard lock(l.mutex);
+    const auto it = find_backed(l, uintptr_t(at));
+    if (it != l.backed.end()) l.backed.erase(it);
+}
+#endif
+}  // namespace
+
+int32_t reserve(size_t size, void** at) {
+    void* placed = reinterpret_cast<void*>(guest_hint);
+    const int32_t result = kernel_reserve(&placed, size, 0);
+    if (result != 0) return result;
+#if defined(__PROSPERO__)
+    if (!outside_gpu_window(uintptr_t(placed), size)) {
+        kernel_unmap(placed, size);
+        return -1;
+    }
+#else
+    (void)outside_gpu_window;
+#endif
+    *at = placed;
+    return 0;
+}
+
+int32_t free_range(void* at, size_t size) { return kernel_unmap(at, size); }
+
+int32_t back(void* at, int64_t* direct) {
+    int64_t start = -1;
+    int32_t result = kernel_allocate(&start);
+    if (result != 0) return result;
+    result = kernel_map(at, start);
+    if (result != 0) {
+        kernel_release(start);
+        return result;
+    }
+    // Committed guest memory reads as zero (VirtualAlloc's contract), and
+    // direct memory is not cleared when it is allocated.
+    std::memset(at, 0, page_size);
+    *direct = start;
+    return 0;
+}
+
+int32_t unback(void* at, int64_t direct) {
+    int32_t result = kernel_unmap(at, page_size);
+    if (result != 0) return result;
+#if !defined(__PROSPERO__)
+    forget_backed(at);
+#endif
+    void* again = at;
+    result = kernel_reserve(&again, page_size, map_fixed);
+    if (result != 0 || again != at) return result ? result : -1;
+    return kernel_release(direct);
+}
+
+int32_t protect(void* at, size_t size, bool read, bool write) {
+    return kernel_protect(at, size, (read ? prot_read : 0) | (write ? prot_write : 0));
+}
+}  // namespace sfr::ps5vm
 #endif
 
 namespace sfr {
@@ -180,11 +400,69 @@ void GuestMemory::protect_pages_writable(uint64_t address, uint64_t size) {
 #ifdef _WIN32
     DWORD old = 0;
     if (!VirtualProtect(base_ + host_floor(address), host_ceil(address + size) - host_floor(address), PAGE_READWRITE, &old))
+#elif defined(SFR_PS5_MEMORY)
+    if (ps5vm::protect(base_ + host_floor(address), host_ceil(address + size) - host_floor(address), true, true) != 0)
 #else
     if (mprotect(base_ + host_floor(address), host_ceil(address + size) - host_floor(address), PROT_READ | PROT_WRITE) != 0)
 #endif
         throw RuntimeStop("memory-map", address, "cannot make a shared host page writable");
 }
+
+#ifdef SFR_PS5_MEMORY
+namespace {
+// regions with every part inside gone removed.
+template <class Region>
+std::vector<Region> subtract_regions(const std::vector<Region>& regions, const std::vector<Region>& gone) {
+    std::vector<Region> out;
+    for (const auto& r : regions) {
+        uint64_t cursor = r.address;
+        const uint64_t end = r.address + r.size;
+        for (const auto& g : gone) {
+            if (g.address + g.size <= cursor || g.address >= end) continue;
+            if (g.address > cursor) out.push_back({cursor, g.address - cursor});
+            cursor = std::max(cursor, g.address + g.size);
+        }
+        if (cursor < end) out.push_back({cursor, end - cursor});
+    }
+    return out;
+}
+}  // namespace
+
+bool GuestMemory::back_host_pages(uint64_t address, uint64_t size) {
+    const uint64_t first = address / ps5vm::page_size;
+    const uint64_t last = (address + size + ps5vm::page_size - 1) / ps5vm::page_size;
+    std::vector<uint64_t> backed_here;
+    for (uint64_t page = first; page < last; ++page) {
+        if (direct_pages_[page] >= 0) continue;  // already backed: not ours to undo
+        int64_t direct = -1;
+        if (ps5vm::back(base_ + page * ps5vm::page_size, &direct) != 0) {
+            // Leave the range as it was: unback only what this call backed.
+            for (const uint64_t undo : backed_here)
+                if (ps5vm::unback(base_ + undo * ps5vm::page_size, direct_pages_[undo]) == 0)
+                    direct_pages_[undo] = -1;
+            return false;
+        }
+        direct_pages_[page] = direct;
+        backed_here.push_back(page);
+    }
+    return true;
+}
+
+bool GuestMemory::unback_host_pages(uint64_t address, uint64_t size) {
+    bool ok = true;
+    const uint64_t first = address / ps5vm::page_size;
+    const uint64_t last = (address + size + ps5vm::page_size - 1) / ps5vm::page_size;
+    for (uint64_t page = first; page < last; ++page) {
+        if (direct_pages_[page] < 0) continue;
+        if (ps5vm::unback(base_ + page * ps5vm::page_size, direct_pages_[page]) != 0) {
+            ok = false;
+            continue;
+        }
+        direct_pages_[page] = -1;
+    }
+    return ok;
+}
+#endif
 
 GuestMemory::GuestMemory(uint64_t backing_budget)
     : partial_page_ends_(std::make_unique<uint16_t[]>(address_space_size / fast_page_size)),
@@ -199,6 +477,13 @@ GuestMemory::GuestMemory(uint64_t backing_budget)
     SYSTEM_INFO info{};
     GetSystemInfo(&info);
     page_size_ = info.dwPageSize;
+#elif defined(SFR_PS5_MEMORY)
+    // Direct memory's unit; the test override may raise it to a multiple.
+    page_size_ = ps5vm::page_size;
+    if (const char* text = std::getenv("SFR_TEST_HOST_PAGE_SIZE")) {
+        const uint64_t simulated = std::strtoull(text, nullptr, 10);
+        if (simulated >= page_size_ && simulated % page_size_ == 0) page_size_ = simulated;
+    }
 #else
     page_size_ = static_cast<uint64_t>(sysconf(_SC_PAGESIZE));
     // SFR_TEST_HOST_PAGE_SIZE=<bytes> (testing): work in host pages that
@@ -216,6 +501,13 @@ GuestMemory::GuestMemory(uint64_t backing_budget)
         throw RuntimeStop("memory", 0, "VirtualAlloc2 is unavailable on this Windows host");
     base_ = static_cast<uint8_t*>(virtual_alloc2(nullptr, address_space_size,
         MEM_RESERVE | MEM_RESERVE_PLACEHOLDER, PAGE_NOACCESS));
+#elif defined(SFR_PS5_MEMORY)
+    void* reserved = nullptr;
+    if (ps5vm::reserve(address_space_size, &reserved) == 0) base_ = static_cast<uint8_t*>(reserved);
+    if (base_) {
+        direct_pages_ = std::make_unique<int64_t[]>(address_space_size / ps5vm::page_size);
+        std::fill_n(direct_pages_.get(), address_space_size / ps5vm::page_size, int64_t{-1});
+    }
 #else
     auto* result = mmap(nullptr, address_space_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     if (result != MAP_FAILED) base_ = static_cast<uint8_t*>(result);
@@ -243,6 +535,13 @@ GuestMemory::~GuestMemory() {
                 VirtualFree(allocation_base, 0, MEM_RELEASE);
             current = next;
         }
+    }
+#elif defined(SFR_PS5_MEMORY)
+    if (base_) {
+        // Every backed page goes back to the pool before the range is freed.
+        for (uint64_t page = 0; page < address_space_size / ps5vm::page_size; ++page)
+            if (direct_pages_[page] >= 0) ps5vm::unback(base_ + page * ps5vm::page_size, direct_pages_[page]);
+        ps5vm::free_range(base_, address_space_size);
     }
 #else
     if (base_) munmap(base_, address_space_size);
@@ -441,17 +740,30 @@ void GuestMemory::decommit(uint64_t address, uint64_t size) {
     for (const auto& operation : operations) {
         // Keep invalidation conservative if the native replacement partially fails.
         mark_written(operation.address, operation.size);
+#ifdef SFR_PS5_MEMORY
+        // The PS5 has no anonymous replacement to discard into: the pages give
+        // their direct memory back and are only reserved again.
+        if (!unback_host_pages(operation.address, operation.size))
+#else
         void* const result = mmap(base_ + operation.address, operation.size, PROT_NONE,
                                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
         if (result != base_ + operation.address)
+#endif
             throw RuntimeStop("memory-decommit", address,
                 completed ? "partial native decommit failed after discarding earlier pages"
                           : "native decommit failed before discarding pages");
         ++completed;
     }
+#ifdef SFR_PS5_MEMORY
+    // Unbacked pages have no memory, so a later commit must back them again.
+    const std::vector<Region> next_backing = subtract_regions(backing_, operations);
+#endif
 #endif
     std::unique_lock layout(layout_mutex_);
     committed_.swap(next);
+#ifdef SFR_PS5_MEMORY
+    backing_ = next_backing;
+#endif
     rebuild_fast_pages(address, size);
 }
 
@@ -577,9 +889,13 @@ void GuestMemory::release(uint64_t address, uint64_t size) {
     for (const auto& r : discarded) {
         // Replacing the native range also discards watched contents in it.
         mark_written(r.address, r.size);
+#ifdef SFR_PS5_MEMORY
+        if (!unback_host_pages(r.address, r.size))
+#else
         void* const result = mmap(base_ + r.address, r.size, PROT_NONE,
                                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
         if (result != base_ + r.address)
+#endif
             throw RuntimeStop("memory-release", address, "cannot restore released guest placeholder backing");
     }
 #endif
@@ -589,6 +905,7 @@ void GuestMemory::release(uint64_t address, uint64_t size) {
     backing_.swap(next_backing);
     rebuild_fast_pages(address, size);
 }
+
 
 void GuestMemory::commit_impl(uint64_t address, uint64_t size, bool write_combined) {
     if (!size || address >= address_space_size || size > address_space_size - address || address % fast_page_size)
@@ -737,8 +1054,29 @@ void GuestMemory::commit_impl(uint64_t address, uint64_t size, bool write_combin
     auto next_backing = backing_;
     next_backing.insert(next_backing.end(), fresh.begin(), fresh.end());
     (void)write_combined;  // cached, see map_write_combined
+#ifdef SFR_PS5_MEMORY
+    // A reserved page has no memory on the PS5: back the fresh ones before
+    // anything is made read-write, and undo that if the commit fails.
+    std::vector<Region> newly_backed;
+    bool host_failed = false;
+    for (const auto& r : fresh) {
+        if (!back_host_pages(r.address, r.size)) {
+            host_failed = true;
+            break;
+        }
+        newly_backed.push_back(r);
+    }
+    if (!host_failed) {
+        disarm_watch(host_begin, host_size);  // read-write again, watched or not
+        host_failed = ps5vm::protect(base_ + host_begin, host_size, true, true) != 0;
+    }
+    if (host_failed)
+        for (const auto& r : newly_backed) unback_host_pages(r.address, r.size);
+    if (host_failed)
+#else
     disarm_watch(host_begin, host_size);  // read-write again, watched or not
     if (mprotect(base_ + host_begin, host_size, PROT_READ | PROT_WRITE) != 0)
+#endif
 #endif
         throw RuntimeStop("memory-map", address, "cannot commit guest pages");
     std::unique_lock layout(layout_mutex_);
@@ -1071,6 +1409,8 @@ bool protect_pages(uint8_t* at, uint64_t size, bool read_only) {
 #ifdef _WIN32
     DWORD old = 0;
     return VirtualProtect(at, size, read_only ? PAGE_READONLY : PAGE_READWRITE, &old) != 0;
+#elif defined(SFR_PS5_MEMORY)
+    return ps5vm::protect(at, size, true, !read_only) == 0;
 #else
     return mprotect(at, size, read_only ? PROT_READ : PROT_READ | PROT_WRITE) == 0;
 #endif

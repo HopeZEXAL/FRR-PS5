@@ -1,4 +1,5 @@
 #pragma once
+#include "ps5_virtual_memory.h"
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -383,6 +384,16 @@ private:
     std::vector<Region> reservations_;
     std::vector<Region> committed_;
     std::vector<Region> backing_;
+#ifdef SFR_PS5_MEMORY
+    // The direct memory behind each 64 KiB host page, or -1 for a page that is
+    // only reserved (ps5_virtual_memory.h).
+    std::unique_ptr<int64_t[]> direct_pages_;
+    // Backs the host pages of [address, address + size) that have no memory
+    // yet; on failure unbacks what it backed and returns false.
+    bool back_host_pages(uint64_t address, uint64_t size);
+    // Unbacks the backed host pages of [address, address + size).
+    bool unback_host_pages(uint64_t address, uint64_t size);
+#endif
     std::vector<Region> write_combined_;
     // Per page: nonzero when a write-combined region covers any of it. The
     // title makes about 1500 such regions, and every reserved load,

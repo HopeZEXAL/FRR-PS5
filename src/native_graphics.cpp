@@ -245,6 +245,12 @@ struct NativeGraphics::Impl {
     std::unordered_map<const plume::RenderShader*, LoopFallback> loop_fallbacks;
 };
 
+#ifdef __PROSPERO__
+extern "C" void frr_boot_mark(const char*);
+static void frr_mark(const char* stage) { frr_boot_mark(stage); }
+#else
+static void frr_mark(const char*) {}
+#endif
 NativeGraphics::NativeGraphics() = default;
 NativeGraphics::~NativeGraphics() = default;
 
@@ -373,7 +379,9 @@ void NativeGraphics::initialize() {
     plume::VulkanDevice::disableDescriptorIndexing = test_no_indexing;
     plume::VulkanDevice::disableScalarBlockLayout = test_switch("SFR_TEST_NO_SCALAR_LAYOUT");
     plume::VulkanDevice::disableBufferDeviceAddress = test_switch("SFR_TEST_NO_DEVICE_ADDRESS");
+    frr_mark("initialize: render interface made");
     auto render_device = render_interface->createDevice();
+    frr_mark(render_device ? "initialize: device made" : "initialize: device NOT made");
     plume::VulkanDevice::disableDescriptorIndexing = false;
     plume::VulkanDevice::disableScalarBlockLayout = false;
     plume::VulkanDevice::disableBufferDeviceAddress = false;
@@ -413,6 +421,7 @@ void NativeGraphics::initialize() {
                            description.type == plume::RenderDeviceType::DISCRETE ? "discrete" :
                            description.type == plume::RenderDeviceType::VIRTUAL ? "virtual" :
                            description.type == plume::RenderDeviceType::CPU ? "cpu" : "unknown";
+        frr_mark("initialize: describing the adapter");
         std::cerr << "NATIVE_GRAPHICS backend=" << name << " adapter=" << description.name
                   << " vendor=0x" << std::hex << uint32_t(description.vendor) << std::dec << " type=" << type
                   << " vram_mb=" << description.dedicatedVideoMemory / (1024 * 1024)

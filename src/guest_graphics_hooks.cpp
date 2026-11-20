@@ -384,9 +384,28 @@ void set_sampler_filter(PPCContext& ctx, const char* name, uint32_t address, sfr
 
 // Strong public definitions replace only the verified weak generated aliases.
 // The original game caller, entry point and all other generated code remain.
+#ifdef __PROSPERO__
+extern "C" void frr_boot_mark(const char*);
+#endif
 SFR_GRAPHICS_HOST_HOOK(sub_824F4CF0) {
     sfr::enter_function(ctx,"sub_824F4CF0",0x824F4CF0);
+#ifdef __PROSPERO__
+    frr_boot_mark("create_device: begin");
+    try {
+        ctx.r3.u64=graphics().create_device(ctx.r3.u32,ctx.r4.u32,ctx.r5.u32,ctx.r6.u32,ctx.r7.u32,ctx.r8.u32);
+    } catch(const std::exception& error) {
+        frr_boot_mark("create_device: failed:");
+        frr_boot_mark(error.what());
+        std::cerr << "NATIVE_CREATE_DEVICE_FAILED " << error.what() << '\n';
+        throw;
+    } catch(...) {
+        frr_boot_mark("create_device: failed with a non-standard exception");
+        throw;
+    }
+    frr_boot_mark("create_device: native device made");
+#else
     ctx.r3.u64=graphics().create_device(ctx.r3.u32,ctx.r4.u32,ctx.r5.u32,ctx.r6.u32,ctx.r7.u32,ctx.r8.u32);
+#endif
     // The original CreateDevice finishes with 82500B38: every render and
     // sampler state setter with its table default (native setters where
     // hooked), null textures, and SetShaderGPRAllocation(0,0,0). Run it so the
@@ -396,6 +415,9 @@ SFR_GRAPHICS_HOST_HOOK(sub_824F4CF0) {
     __imp__sub_82500B38(ctx,base);
     ctx.lr=lr;
     ctx.r3.u64=0;
+#ifdef __PROSPERO__
+    frr_boot_mark("create_device: defaults set, returning to the game");
+#endif
     std::cerr << "NATIVE_CREATE_DEVICE device=0x" << std::hex << sfr::GuestGraphics::device_address
               << std::dec << " width=" << graphics().presentation().width()
               << " height=" << graphics().presentation().height() << " result=0\n";

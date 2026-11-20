@@ -537,6 +537,12 @@ uint32_t GuestGraphics::texture_binding(uint32_t slot) const {
     return *impl_->texture_bindings[slot];
 }
 
+#ifdef __PROSPERO__
+extern "C" void frr_boot_mark(const char*);
+static void gg_mark(const char* stage) { frr_boot_mark(stage); }
+#else
+static void gg_mark(const char*) {}
+#endif
 uint32_t GuestGraphics::create_device(uint32_t adapter, uint32_t mode, uint32_t reserved,
                                       uint32_t flags, uint32_t parameters, uint32_t output) {
     if (impl_) unsupported(device_address, "a native guest device already exists");
@@ -576,8 +582,11 @@ uint32_t GuestGraphics::create_device(uint32_t adapter, uint32_t mode, uint32_t 
     const auto sampler_defaults = read_sampler_defaults(next->sampler_defaults);
     for (auto& control : next->blend_controls) control = decode_blend_control(blend_defaults.effective);
     graphics_.initialize();
+    gg_mark("create_device: graphics initialized");
     next->presentation = std::make_unique<NativePresentation>(graphics_,words[0],words[1]);
+    gg_mark("create_device: presentation made");
     next->shaders = std::make_unique<NativeShaders>(memory_,graphics_);
+    gg_mark("create_device: shaders ready");
 
     memory_.map(device_address, device_size);
     for (uint32_t handle : {color_handle,depth_handle,presentation_handle}) {

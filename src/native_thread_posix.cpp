@@ -27,15 +27,36 @@
 #include <vector>
 
 #ifdef __PROSPERO__
-// The PS5 is FreeBSD underneath: a processor set is a cpuset_t, the thread
-// calls are the same pthread_*affinity_np (pthread_np.h, in libkernel), and
-// the process's own set comes from cpuset_getaffinity.
+// The PS5 is FreeBSD underneath (a processor set is a cpuset_t), but a title
+// uses the scePthread affinity calls every game uses: the FreeBSD
+// cpuset_getaffinity and pthread_*affinity_np exports may not be given to a
+// title. The process's own set is the main thread's, read while the static
+// initialisers run on it.
 #include <pthread_np.h>
 #include <sys/cpuset.h>
 using cpu_set_t = cpuset_t;
+extern "C" {
+int scePthreadSetaffinity(pthread_t thread, uint64_t mask);
+int scePthreadGetaffinity(pthread_t thread, uint64_t* mask);
+}
 namespace {
-int sched_getaffinity(pid_t, size_t size, cpu_set_t* set) {
-    return cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID, -1, size, set);
+uint64_t ps5_read_affinity(pthread_t thread) {
+    uint64_t mask = 0;
+    if (scePthreadGetaffinity(thread, &mask) != 0) mask = 0;
+    return mask;
+}
+const uint64_t ps5_process_mask = [] {
+    const uint64_t mask = ps5_read_affinity(pthread_self());
+    return mask != 0 ? mask : uint64_t{0x3fff};
+}();
+void ps5_set_from_mask(uint64_t mask, cpu_set_t* set) {
+    CPU_ZERO(set);
+    for (int cpu = 0; cpu < 64; ++cpu)
+        if (mask >> cpu & 1) CPU_SET(cpu, set);
+}
+int sched_getaffinity(pid_t, size_t, cpu_set_t* set) {
+    ps5_set_from_mask(ps5_process_mask, set);
+    return 0;
 }
 }
 #endif
@@ -87,6 +108,11 @@ static int set_thread_affinity(pthread_t thread, const cpu_set_t& set) {
     std::lock_guard lock(apple_affinity_lock);
     apple_affinity[thread] = set;
     return 0;
+#elif defined(__PROSPERO__)
+    uint64_t mask = 0;
+    for (int cpu = 0; cpu < 64; ++cpu)
+        if (CPU_ISSET(cpu, &set)) mask |= uint64_t{1} << cpu;
+    return scePthreadSetaffinity(thread, mask) == 0 ? 0 : EINVAL;
 #elif defined(__ANDROID__)
     return sched_setaffinity(pthread_gettid_np(thread), sizeof(set), &set) == 0 ? 0 : errno;
 #else
@@ -98,6 +124,11 @@ static int get_thread_affinity(pthread_t thread, cpu_set_t& set) {
     std::lock_guard lock(apple_affinity_lock);
     const auto found = apple_affinity.find(thread);
     set = found != apple_affinity.end() ? found->second : all_processors();
+    return 0;
+#elif defined(__PROSPERO__)
+    const uint64_t mask = ps5_read_affinity(thread);
+    if (mask == 0) return EINVAL;
+    ps5_set_from_mask(mask, &set);
     return 0;
 #elif defined(__ANDROID__)
     return sched_getaffinity(pthread_gettid_np(thread), sizeof(set), &set) == 0 ? 0 : errno;

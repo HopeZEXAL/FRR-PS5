@@ -542,6 +542,26 @@ NativeInput NativeInput::sdl(std::function<void*()> focus_window, std::function<
         prompts::note_pad_present(user, controller != nullptr, sony ? prompts::Glyphs::playstation : prompts::Glyphs::xbox);
         if (!controller) return std::nullopt;
         const GamepadState state = read_sdl_pad(controller);
+#ifdef __PROSPERO__
+        // The touchpad points the Kinect hand cursor (the first player's):
+        // the pad stands for the screen, a finger's spot is the cursor's, as
+        // a finger on a phone or the mouse is elsewhere (touch_controls.h).
+        // The right stick still moves it too. SFR_TOUCHPAD_POINTER=0: off.
+        static const bool touch_pointer = [] {
+            const char* t = std::getenv("SFR_TOUCHPAD_POINTER"); return !t || *t != '0'; }();
+        if (user == 0 && touch_pointer && SDL_GameControllerGetNumTouchpads(controller) > 0) {
+            static bool touching = false;
+            Uint8 down = 0;
+            float x = 0, y = 0, pressure = 0;
+            if (SDL_GameControllerGetTouchpadFinger(controller, 0, 0, &down, &x, &y, &pressure) == 0 && down) {
+                publish_pointer(std::clamp(x, 0.0f, 1.0f), std::clamp(y, 0.0f, 1.0f), !touching, true);
+                touching = true;
+            } else if (touching) {
+                release_pointer();
+                touching = false;
+            }
+        }
+#endif
         // A button or a stick past a small dead zone takes over from the
         // touch controls (touch_controls.h).
         constexpr int dead_zone = 8000;

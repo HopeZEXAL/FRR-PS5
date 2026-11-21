@@ -1929,3 +1929,53 @@ static void test_player_breakaway() {
     const float want=std::bit_cast<float>(memory.load<uint32_t>(rider+0x724))+extra;
     if(std::bit_cast<float>(memory.load<uint32_t>(rider+0x71C))<want) memory.store<uint32_t>(rider+0x71C,std::bit_cast<uint32_t>(want));
 }
+
+// Chaos Emeralds gear mod (gear table 0x82B47E78, 416-byte entries, entry 38;
+// see super_sonic_board.h). Per entry: +12 the gear parts it accepts (a bit
+// per part; 0xFFFFFFFF on ordinary boards, 0 on the Chaos Emeralds and the
+// Omnipotence), +24 its gear-part slots (2 on ordinary boards, 0 here; the
+// parts page compares it with 1 and 3, 8245B7B0), +112 its type mask (speed
+// 0x1, fly 0x2, power 0x4; the live gear's +168 is rebuilt from it, 82297B90).
+//   SFR_MOD_CHAOS_TYPES=1    all three types, Sonic and Super Sonic alike
+//   SFR_MOD_CHAOS_SLOTS=N    N (0-3) gear-part slots, accepting every part
+// The table is patched once, the first time any of the hooks below runs (the
+// race's gear rebuild and the readers of the slot count). Off online
+// (SFR_LIVE_HOST/SFR_LIVE_SERVER), where every player races by the same rules.
+namespace {
+constexpr uint32_t gear_table=0x82B47E78, gear_entry_size=416, chaos_emeralds_gear=38;
+void apply_chaos_emerald_mod() {
+    static std::once_flag once;
+    std::call_once(once,[]{
+        if(!sfr::active_memory) return;
+        const auto env=[](const char* name){ const char* t=std::getenv(name); return t?std::string_view(t):std::string_view(); };
+        if(!env("SFR_LIVE_HOST").empty() || !env("SFR_LIVE_SERVER").empty()) return;
+        const bool types=env("SFR_MOD_CHAOS_TYPES")=="1";
+        int slots=-1;
+        if(const auto text=env("SFR_MOD_CHAOS_SLOTS"); text.size()==1 && text[0]>='0' && text[0]<='3') slots=text[0]-'0';
+        if(!types && slots<0) return;
+        const uint64_t entry=uint64_t(gear_table)+uint64_t(chaos_emeralds_gear)*gear_entry_size;
+        auto& memory=*sfr::active_memory;
+        const uint32_t old_parts=memory.load<uint32_t>(entry+12), old_slots=memory.load<uint32_t>(entry+24),
+                       old_types=memory.load<uint32_t>(entry+112);
+        if(types) memory.store<uint32_t>(entry+112,sfr::super_sonic::all_types);
+        if(slots>=0) {
+            memory.store<uint32_t>(entry+24,uint32_t(slots));
+            if(slots>0) memory.store<uint32_t>(entry+12,0xFFFFFFFFu);
+        }
+        std::cerr << "GAME_PATCH chaos_emerald_mod types=0x" << std::hex << old_types << "->0x"
+                  << memory.load<uint32_t>(entry+112) << " slots=" << std::dec << old_slots << "->"
+                  << memory.load<uint32_t>(entry+24) << " parts=0x" << std::hex << old_parts << "->0x"
+                  << memory.load<uint32_t>(entry+12) << std::dec << '\n';
+    });
+}
+}
+PPC_FUNC_IMPL(__imp__sub_82297B90);
+SFR_CONCURRENT_HOOK(sub_82297B90) { apply_chaos_emerald_mod(); __imp__sub_82297B90(ctx,base); }
+PPC_FUNC_IMPL(__imp__sub_8245B7B0);
+SFR_CONCURRENT_HOOK(sub_8245B7B0) { apply_chaos_emerald_mod(); __imp__sub_8245B7B0(ctx,base); }
+PPC_FUNC_IMPL(__imp__sub_8245D798);
+SFR_CONCURRENT_HOOK(sub_8245D798) { apply_chaos_emerald_mod(); __imp__sub_8245D798(ctx,base); }
+PPC_FUNC_IMPL(__imp__sub_825089E0);
+SFR_CONCURRENT_HOOK(sub_825089E0) { apply_chaos_emerald_mod(); __imp__sub_825089E0(ctx,base); }
+PPC_FUNC_IMPL(__imp__sub_823DC7C0);
+SFR_CONCURRENT_HOOK(sub_823DC7C0) { apply_chaos_emerald_mod(); __imp__sub_823DC7C0(ctx,base); }

@@ -102,6 +102,45 @@ int sched_getaffinity(int, size_t, cpu_set_t* set) {
 }
 #endif
 
+#ifdef __PROSPERO__
+#include <pthread.h>
+#include <sched.h>
+#include <cstdio>
+#include <iostream>
+#include <cstdlib>
+#include <cstring>
+#include <atomic>
+#include <unistd.h>
+// The PS5 does not time-slice threads of one priority under the policy titles
+// get (races stalled ~150 ms while a runnable job helper waited behind a busy
+// thread on its core). SFR_PS5_SCHED: rr (default) moves each guest thread to
+// round-robin at its priority; keep leaves it. PS5_SCHED lines report the first
+// threads' policy and priority before and the result.
+extern "C" void frr_ps5_apply_schedule_current() {
+    static const int mode = [] {
+        const char* t = std::getenv("SFR_PS5_SCHED");
+        return t && std::strcmp(t, "keep") == 0 ? 0 : 1;
+    }();
+    static std::atomic<int> reported{0};
+    int policy = -1; sched_param param{};
+    const int got = pthread_getschedparam(pthread_self(), &policy, &param);
+    int set = -2;
+    if (mode == 1 && got == 0 && policy != SCHED_RR) {
+        sched_param keep = param;
+        set = pthread_setschedparam(pthread_self(), SCHED_RR, &keep);
+    }
+    if (reported.fetch_add(1) < 12) {
+        int after_policy = -1; sched_param after{};
+        pthread_getschedparam(pthread_self(), &after_policy, &after);
+        char line[160];
+        const int n = std::snprintf(line, sizeof(line), "PS5_SCHED got=%d policy=%d priority=%d set=%d now_policy=%d now_priority=%d\n",
+                                    got, policy, param.sched_priority, set, after_policy, after.sched_priority);
+        if (n > 0) std::cerr << line;
+    }
+}
+static void ps5_apply_schedule() { frr_ps5_apply_schedule_current(); }
+#endif
+
 namespace sfr {
 namespace {
 [[noreturn]] void throw_host_error(const char* operation, int error) {
@@ -190,6 +229,9 @@ struct NativeThread::Impl {
 
     static void* trampoline(void* raw) noexcept {
         auto& self = *static_cast<Impl*>(raw);
+#ifdef __PROSPERO__
+        ps5_apply_schedule();
+#endif
         {
             std::unique_lock lock(self.gate_mutex);
             self.gate.wait(lock, [&] { return self.suspend_count == 0; });

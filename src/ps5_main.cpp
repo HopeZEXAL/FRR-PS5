@@ -33,6 +33,7 @@
 #include <streambuf>
 
 int sfr_game_main(int argc, char** argv);
+extern "C" void frr_ps5_apply_schedule_current();
 // The boot tracer (ps5_boot_trace.c): /data/frr-ps5/boot-trace.txt.
 extern "C" void frr_boot_mark(const char* stage);
 extern "C" int sceKernelDebugOutText(int channel, const char* text);
@@ -224,6 +225,7 @@ int main() {
     std::cerr << "PS5_GAME starting\n";
     frr_boot_mark("starting the game");
     klog("starting the game (log: /data/frr-ps5/game.log)");
+    frr_ps5_apply_schedule_current();  // the main thread too (native_thread_posix.cpp)
     const int code = sfr_game_main(4, arguments);
     std::cerr << "PS5_GAME exited code=" << code << '\n';
     std::cerr.flush();

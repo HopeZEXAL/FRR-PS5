@@ -27,6 +27,9 @@
 #include <vector>
 
 #ifdef __PROSPERO__
+#include <sys/mman.h>
+#endif
+#ifdef __PROSPERO__
 // The PS5 is FreeBSD underneath (a processor set is a cpuset_t), but a title
 // uses the scePthread affinity calls every game uses: the FreeBSD
 // cpuset_getaffinity and pthread_*affinity_np exports may not be given to a
@@ -156,6 +159,19 @@ struct NativeThread::Impl {
     portable::WaitablePtr exit = portable::make_thread_exit();
 
     Impl(Entry callback, uint64_t allowed) : entry(std::move(callback)), allowed_affinity(allowed) {}
+#ifdef __PROSPERO__
+    // The thread's stack, in the title heap's direct memory (see the
+    // constructor), and whether its lowest page is a guard. Freed only once
+    // the thread is joined: a thread still running keeps its stack.
+    void* stack = nullptr;
+    bool stack_guard = false;
+    ~Impl() {
+        if (!stack || !joined) return;
+        if (stack_guard) mprotect(stack, ps5_stack_guard, PROT_READ | PROT_WRITE);
+        std::free(stack);
+    }
+    static constexpr size_t ps5_stack_guard = 0x4000;
+#endif
 
     static void* trampoline(void* raw) noexcept {
         auto& self = *static_cast<Impl*>(raw);
@@ -198,7 +214,22 @@ NativeThread::NativeThread(Entry entry) {
     state->id = next_id.fetch_add(1);
     pthread_attr_t attributes;
     pthread_attr_init(&attributes);
-    pthread_attr_setstacksize(&attributes, 16u * 1024u * 1024u);
+    constexpr size_t stack_size = 16u * 1024u * 1024u;
+#ifdef __PROSPERO__
+    // A PS5 title's thread stacks otherwise come from its flexible memory,
+    // about 400 MiB for everything: the game's 24th thread of 16 MiB was
+    // refused (build 11, pthread_create EAGAIN). The title heap is direct
+    // memory, of which there is plenty; the lowest page guards the stack.
+    if (posix_memalign(&state->stack, 0x10000, stack_size) == 0) {
+        state->stack_guard = mprotect(state->stack, Impl::ps5_stack_guard, PROT_NONE) == 0;
+        pthread_attr_setstack(&attributes, state->stack, stack_size);
+    } else {
+        state->stack = nullptr;
+        pthread_attr_setstacksize(&attributes, stack_size);
+    }
+#else
+    pthread_attr_setstacksize(&attributes, stack_size);
+#endif
     const int created = pthread_create(&state->thread, &attributes, &Impl::trampoline, state.get());
     pthread_attr_destroy(&attributes);
     if (created != 0) throw_host_error("pthread_create", created);

@@ -1876,7 +1876,8 @@ namespace {
 // TEXTURE_PROFILE (with the frame metrics): where texture() spends its time,
 // in sections, reported every 600 frames.
 struct TextureProfile {
-    enum { lookup, early, written, rearm, same, dynamic, upload, count };
+    enum { lookup, early, written, rearm, same, dynamic, upload, readable, count };
+    uint64_t view_bytes = 0, views_ok = 0, views_skipped = 0, max_range = 0;
     double ms[count]{}; uint64_t calls[count]{};
     std::chrono::steady_clock::time_point last;
     uint64_t reported = 0;
@@ -1909,10 +1910,12 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
     if (timed && impl_->frame >= prof.reported + 600) {
         prof.reported = impl_->frame;
         std::cerr << "TEXTURE_PROFILE frame=" << impl_->frame;
-        static const char* names[] = {"lookup", "early", "written", "rearm", "same", "dynamic", "upload"};
+        static const char* names[] = {"lookup", "early", "written", "rearm", "same", "dynamic", "upload", "readable"};
         for (int i = 0; i < TextureProfile::count; ++i)
             std::cerr << ' ' << names[i] << "_ms=" << prof.ms[i] << ' ' << names[i] << "_n=" << prof.calls[i];
-        std::cerr << " textures=" << impl_->texture_ranges.size() << '\n';
+        std::cerr << " textures=" << impl_->texture_ranges.size() << " view_mb=" << prof.view_bytes / (1024 * 1024)
+                  << " views_ok=" << prof.views_ok << " views_skipped=" << prof.views_skipped
+                  << " max_range_kb=" << prof.max_range / 1024 << '\n';
         prof = TextureProfile{};
         prof.reported = impl_->frame;
         prof.last = std::chrono::steady_clock::now();
@@ -1949,7 +1952,17 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
         for (uint64_t candidate : {uint64_t(physical) + 0xE0000000u - 0x1000u, uint64_t(physical) | 0xA0000000u,
                                    uint64_t(physical) | 0xC0000000u}) {
             if (candidate + size > 0x100000000ull) continue;
-            if (!memory.readable(candidate, size)) continue;
+            if (timed) {
+                const auto start = std::chrono::steady_clock::now();
+                const bool ok = memory.readable(candidate, size);
+                const auto now = std::chrono::steady_clock::now();
+                const double spent = std::chrono::duration<double, std::milli>(now - start).count();
+                prof.ms[TextureProfile::readable] += spent;
+                ++prof.calls[TextureProfile::readable];
+                prof.last += now - start;  // kept out of the enclosing section
+                if (!ok) { ++prof.views_skipped; continue; }
+                ++prof.views_ok; prof.view_bytes += size; prof.max_range = (std::max)(prof.max_range, size);
+            } else if (!memory.readable(candidate, size)) continue;
             visit(candidate);
         }
     };

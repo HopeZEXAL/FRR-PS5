@@ -1716,14 +1716,21 @@ const sfr::super_sonic::Options& super_sonic_options() {
 }
 }
 
+bool chaos_mod_types();
+void chaos_mod_super_types(uint32_t ability);
 SFR_CONCURRENT_HOOK(sub_823D9970) {
     const sfr::super_sonic::Options& options=super_sonic_options();
-    if(!sfr::super_sonic::stays_on_board(options)) { __imp__sub_823D9970(ctx,base); return; }
+    if(!sfr::super_sonic::stays_on_board(options)) {
+        __imp__sub_823D9970(ctx,base);
+        if(chaos_mod_types()) chaos_mod_super_types(ctx.r3.u32);
+        return;
+    }
     const uint32_t ability=ctx.r3.u32;
     const uint32_t phase=sfr::active_memory->load<uint32_t>(ability+20);
     const uint32_t run=sfr::super_sonic::update_phase(phase,true);
     if(run!=phase) sfr::active_memory->store<uint32_t>(ability+20,run);
     __imp__sub_823D9970(ctx,base);
+    if(chaos_mod_types()) chaos_mod_super_types(ability);
     if(!options.all_types) return;
     const uint32_t after=sfr::active_memory->load<uint32_t>(ability+20);
     const uint32_t racer=sfr::active_memory->load<uint32_t>(ability+232);
@@ -1756,8 +1763,10 @@ SFR_CONCURRENT_HOOK(sub_822BC5A0) {
     if(!(flags&sfr::super_sonic::super_sonic_flag)) { __imp__sub_822BC5A0(ctx,base); return; }
     const uint32_t racer=sfr::active_memory->load<uint32_t>(rider+1680);
     const uint32_t gear=racer?sfr::active_memory->load<uint32_t>(racer+3216):0;
-    if(!gear || !sfr::super_sonic::rail_check_as_sonic(super_sonic_options(),local_player_racer(racer),
-                                                        sfr::active_memory->load<uint32_t>(gear+168),flags)) {
+    const uint32_t mask=gear?sfr::active_memory->load<uint32_t>(gear+168):0;
+    const bool mod_rails=chaos_mod_types() && (mask&sfr::super_sonic::type_speed);
+    if(!gear || (!mod_rails && !sfr::super_sonic::rail_check_as_sonic(super_sonic_options(),local_player_racer(racer),
+                                                        mask,flags))) {
         __imp__sub_822BC5A0(ctx,base);
         return;
     }
@@ -1936,8 +1945,14 @@ static void test_player_breakaway() {
 // Omnipotence), +24 its gear-part slots (2 on ordinary boards, 0 here; the
 // parts page compares it with 1 and 3, 8245B7B0), +112 its type mask (speed
 // 0x1, fly 0x2, power 0x4; the live gear's +168 is rebuilt from it, 82297B90).
-//   SFR_MOD_CHAOS_TYPES=1    all three types, Sonic and Super Sonic alike
-//   SFR_MOD_CHAOS_SLOTS=N    N (0-3) gear-part slots, accepting every part
+//   SFR_MOD_CHAOS_TYPES=1    Sonic has the speed type (rails); Super Sonic all
+//                            three while transformed (ability phase 3 on,
+//                            set after each ability update, 823D9970), and
+//                            the rail check runs for him as for Sonic
+//   SFR_MOD_CHAOS_SLOTS=N    N (0-3) gear-part slots, accepting every part but
+//   SFR_MOD_CHAOS_EXCLUDE_PARTS=0xMASK  these (a bit per part id, the parts
+//                            page's order from 0; default 0x8, the part the
+//                            power-type boards exclude)
 // The table is patched once, the first time any of the hooks below runs (the
 // race's gear rebuild and the readers of the slot count). Off online
 // (SFR_LIVE_HOST/SFR_LIVE_SERVER), where every player races by the same rules.
@@ -1957,10 +1972,13 @@ void apply_chaos_emerald_mod() {
         auto& memory=*sfr::active_memory;
         const uint32_t old_parts=memory.load<uint32_t>(entry+12), old_slots=memory.load<uint32_t>(entry+24),
                        old_types=memory.load<uint32_t>(entry+112);
-        if(types) memory.store<uint32_t>(entry+112,sfr::super_sonic::all_types);
+        if(types) memory.store<uint32_t>(entry+112,sfr::super_sonic::type_speed);
         if(slots>=0) {
             memory.store<uint32_t>(entry+24,uint32_t(slots));
-            if(slots>0) memory.store<uint32_t>(entry+12,0xFFFFFFFFu);
+            uint32_t exclude=0x8;
+            if(const auto text=env("SFR_MOD_CHAOS_EXCLUDE_PARTS"); !text.empty())
+                exclude=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
+            if(slots>0) memory.store<uint32_t>(entry+12,~exclude);
         }
         std::cerr << "GAME_PATCH chaos_emerald_mod types=0x" << std::hex << old_types << "->0x"
                   << memory.load<uint32_t>(entry+112) << " slots=" << std::dec << old_slots << "->"
@@ -1968,6 +1986,32 @@ void apply_chaos_emerald_mod() {
                   << memory.load<uint32_t>(entry+12) << std::dec << '\n';
     });
 }
+}
+bool chaos_mod_types() {
+    static const bool on=[]{
+        const auto set=[](const char* n){ const char* t=std::getenv(n); return t && *t; };
+        const char* t=std::getenv("SFR_MOD_CHAOS_TYPES");
+        return t && *t=='1' && !set("SFR_LIVE_HOST") && !set("SFR_LIVE_SERVER");
+    }();
+    return on;
+}
+// After an update that left Super Sonic transformed (phase 3 on), his live
+// gear gets all three types; the return to Sonic rebuilds it from the table
+// (speed only).
+void chaos_mod_super_types(uint32_t ability) {
+    auto& memory=*sfr::active_memory;
+    const uint32_t phase=memory.load<uint32_t>(ability+20);
+    if(phase<sfr::super_sonic::phase_settling) return;
+    const uint32_t racer=memory.load<uint32_t>(ability+232);
+    const uint32_t gear=racer?memory.load<uint32_t>(racer+3216):0;
+    if(!gear) return;
+    const uint32_t mask=memory.load<uint32_t>(gear+168);
+    if((mask&sfr::super_sonic::all_types)!=sfr::super_sonic::all_types) {
+        memory.store<uint32_t>(gear+168,mask|sfr::super_sonic::all_types);
+        static int reported=0;
+        if(reported++<8) std::cerr << "GAME_PATCH chaos_emerald_super_types racer=0x" << std::hex << racer
+                                   << " phase=" << std::dec << phase << " mask=0x" << std::hex << mask << std::dec << '\n';
+    }
 }
 PPC_FUNC_IMPL(__imp__sub_82297B90);
 SFR_CONCURRENT_HOOK(sub_82297B90) { apply_chaos_emerald_mod(); __imp__sub_82297B90(ctx,base); }

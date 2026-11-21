@@ -1744,12 +1744,13 @@ const sfr::super_sonic::Options& super_sonic_options() {
 }
 
 bool chaos_mod_types();
+bool chaos_mod_super();
 void chaos_mod_super_types(uint32_t ability);
 SFR_CONCURRENT_HOOK(sub_823D9970) {
     const sfr::super_sonic::Options& options=super_sonic_options();
     if(!sfr::super_sonic::stays_on_board(options)) {
         __imp__sub_823D9970(ctx,base);
-        if(chaos_mod_types()) chaos_mod_super_types(ctx.r3.u32);
+        if(chaos_mod_super()) chaos_mod_super_types(ctx.r3.u32);
         return;
     }
     const uint32_t ability=ctx.r3.u32;
@@ -1757,7 +1758,7 @@ SFR_CONCURRENT_HOOK(sub_823D9970) {
     const uint32_t run=sfr::super_sonic::update_phase(phase,true);
     if(run!=phase) sfr::active_memory->store<uint32_t>(ability+20,run);
     __imp__sub_823D9970(ctx,base);
-    if(chaos_mod_types()) chaos_mod_super_types(ability);
+    if(chaos_mod_super()) chaos_mod_super_types(ability);
     if(!options.all_types) return;
     const uint32_t after=sfr::active_memory->load<uint32_t>(ability+20);
     const uint32_t racer=sfr::active_memory->load<uint32_t>(ability+232);
@@ -2022,6 +2023,14 @@ bool chaos_mod_types() {
     }();
     return on;
 }
+bool chaos_mod_super() {
+    static const bool on=[]{
+        const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET");
+        const auto set=[](const char* n){ const char* v=std::getenv(n); return v && *v; };
+        return chaos_mod_types() || (t && *t=='1' && !set("SFR_LIVE_HOST") && !set("SFR_LIVE_SERVER"));
+    }();
+    return on;
+}
 // After an update that left Super Sonic transformed (phase 3 on), his live
 // gear gets all three types; the return to Sonic rebuilds it from the table
 // (speed only).
@@ -2032,6 +2041,16 @@ void chaos_mod_super_types(uint32_t ability) {
     const uint32_t racer=memory.load<uint32_t>(ability+232);
     const uint32_t gear=racer?memory.load<uint32_t>(racer+3216):0;
     if(!gear) return;
+    // The magnet (SFR_MOD_CHAOS_SUPER_MAGNET=1): the Ring Eater part's bit,
+    // 0x8 in the live gear's part abilities (+172; a race with the part had
+    // it, one without did not; 822D48D0 and others test it). The return to
+    // Sonic rebuilds the gear without it.
+    static const bool magnet=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET"); return t && *t=='1'; }();
+    if(magnet) {
+        const uint32_t abilities=memory.load<uint32_t>(gear+172);
+        if(!(abilities&0x8)) memory.store<uint32_t>(gear+172,abilities|0x8);
+    }
+    if(!chaos_mod_types()) return;
     const uint32_t mask=memory.load<uint32_t>(gear+168);
     if((mask&sfr::super_sonic::all_types)!=sfr::super_sonic::all_types) {
         memory.store<uint32_t>(gear+168,mask|sfr::super_sonic::all_types);

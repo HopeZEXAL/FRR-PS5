@@ -14,6 +14,8 @@
 
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
+#include <iostream>
 #include <cstring>
 #include <limits>
 #include <map>
@@ -136,6 +138,12 @@ struct AssetFiles::Impl {
         return names;
     }
 
+    // Why a guest path was not found, on the log: the first few only.
+    static void report_lookup_failure(const char* step, const std::string& where, int error) {
+        static std::atomic<int> reported{0};
+        if (reported.fetch_add(1) >= 20) return;
+        std::cerr << "ASSET_LOOKUP_FAILED step=" << step << " path=" << where << " errno=" << error << '\n';
+    }
     // The host path of a guest path, or the NT status of the failed lookup.
     std::pair<uint32_t, std::string> resolve(std::string_view requested) const {
         const std::string guest_path = voice_redirected(requested);  // voice_language.h
@@ -153,14 +161,26 @@ struct AssetFiles::Impl {
         for (size_t i = 0; i < components.size(); ++i) {
             const auto& names = listing(relative);
             const auto found = names.find(lower(components[i]));
-            if (found == names.end())
+            if (found == names.end()) {
+                report_lookup_failure(names.empty() ? "list (empty or unreadable directory)" : "match",
+                                      (relative.empty() ? root : root + "/" + relative) + " / " + components[i], 0);
                 return {i + 1 == components.size() ? status_name_not_found : status_path_not_found, {}};
+            }
             relative += (relative.empty() ? "" : "/") + found->second;
         }
         const std::string host = root + "/" + relative;
         struct stat info{};
+#ifdef __PROSPERO__
+        // A PS5 title may be refused lstat, as it is realpath; /data holds no
+        // symbolic links a game could have placed, so stat stands in.
+        if (stat(host.c_str(), &info) != 0) {
+            report_lookup_failure("stat", host, errno);
+            return {status_name_not_found, {}};
+        }
+#else
         if (lstat(host.c_str(), &info) != 0) return {status_name_not_found, {}};
         if (S_ISLNK(info.st_mode)) throw std::runtime_error("asset files: symbolic links are not followed");
+#endif
         return {status_success, host};
     }
 };
@@ -231,8 +251,16 @@ AssetFiles::OpenResult AssetFiles::open(std::string_view guest_path, uint32_t sh
         throw std::runtime_error("asset files: guest file handle namespace exhausted");
     const auto [status, host] = impl_->resolve(guest_path);
     if (status) return {status, 0xffffffff, 0};
+#ifdef __PROSPERO__
+    const int fd = ::open(host.c_str(), O_RDONLY);
+#else
     const int fd = ::open(host.c_str(), O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-    if (fd < 0) return {errno == ENOENT ? status_name_not_found : 0xc0000022u, 0xffffffff, 0};
+#endif
+    if (fd < 0) {
+        const int error = errno;
+        Impl::report_lookup_failure("open", host, error);
+        return {error == ENOENT ? status_name_not_found : 0xc0000022u, 0xffffffff, 0};
+    }
     struct stat info{};
     if (fstat(fd, &info) != 0) {
         ::close(fd);

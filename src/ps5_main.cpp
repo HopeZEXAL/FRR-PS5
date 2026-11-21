@@ -173,7 +173,9 @@ int main() {
         std::cerr.rdbuf(&log_buffer);
         std::clog.rdbuf(&log_buffer);
         // C stderr (the Vulkan driver's messages) to the same file.
-        if (::dup2(log_fd, 2) < 0) frr_boot_mark("dup2 onto stderr refused");
+        // A title is refused dup2: C stderr then gets a file of its own.
+        if (::dup2(log_fd, 2) < 0 && !std::freopen(at("driver.log").c_str(), "w", stderr))
+            frr_boot_mark("no file for C stderr");
         std::setvbuf(stderr, nullptr, _IONBF, 0);
     }
     // SDL's PS5 video driver opens VideoOut, which the renderer owns: if

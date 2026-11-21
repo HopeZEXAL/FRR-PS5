@@ -1749,8 +1749,9 @@ void chaos_mod_super_types(uint32_t ability);
 SFR_CONCURRENT_HOOK(sub_823D9970) {
     const sfr::super_sonic::Options& options=super_sonic_options();
     if(!sfr::super_sonic::stays_on_board(options)) {
+        const uint32_t ability=ctx.r3.u32;  // the call leaves its result in r3
         __imp__sub_823D9970(ctx,base);
-        if(chaos_mod_super()) chaos_mod_super_types(ctx.r3.u32);
+        if(chaos_mod_super()) chaos_mod_super_types(ability);
         return;
     }
     const uint32_t ability=ctx.r3.u32;
@@ -2036,6 +2037,7 @@ bool chaos_mod_super() {
 // (speed only).
 void chaos_mod_super_types(uint32_t ability) {
     auto& memory=*sfr::active_memory;
+    if(!ability) return;
     const uint32_t phase=memory.load<uint32_t>(ability+20);
     if(phase<sfr::super_sonic::phase_settling) return;
     const uint32_t racer=memory.load<uint32_t>(ability+232);

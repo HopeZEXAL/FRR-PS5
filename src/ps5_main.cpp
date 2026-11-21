@@ -14,6 +14,7 @@
 // calls the game's own main (diagnostic_main.cpp, compiled as sfr_game_main),
 // as android_main.cpp does on Android.
 #include "installer.h"
+#include "launcher_settings.h"
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -185,6 +186,17 @@ int main() {
     frr_boot_mark("game.log open");
 
     load_settings(at("settings.env"));
+    // What the launcher hands the game to play (launcher_settings.cpp): no
+    // diagnostic watchdog (the CPU diagnostic stopped the game at 10 s, build
+    // 9), no call budget, no traces, parallel guests, a 60 fps frame limit.
+    // settings.ini holds the launcher's options, as on the desktop; any
+    // NAME=VALUE in settings.env still wins.
+    setenv("SFR_GRAPHICS", "vulkan", 1);
+    {
+        const auto settings = sfr::load_launcher_settings(at("settings.ini"));
+        for (const auto& [name, value] : sfr::game_environment(settings, root))
+            if (!value.empty() && name != "SFR_GRAPHICS") setenv(name.c_str(), value.c_str(), 0);
+    }
     // Defaults, under the data folder (a title's own folder is read-only),
     // as absolute paths for every relative default the game has.
     setenv("SFR_SHADER_PACK", at("shaders.pack").c_str(), 0);

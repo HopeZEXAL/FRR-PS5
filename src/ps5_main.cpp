@@ -34,6 +34,8 @@
 
 int sfr_game_main(int argc, char** argv);
 extern "C" void frr_ps5_apply_schedule_current();
+// For compat/ps5_thread_sampler.c (PRESENT_STALL lines).
+extern "C" void frr_log_line(const char* line) { std::cerr << line; }
 // The boot tracer (ps5_boot_trace.c): /data/frr-ps5/boot-trace.txt.
 extern "C" void frr_boot_mark(const char* stage);
 extern "C" int sceKernelDebugOutText(int channel, const char* text);

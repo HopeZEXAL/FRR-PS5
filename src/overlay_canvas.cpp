@@ -1,3 +1,4 @@
+#include <iostream>
 #include "overlay_canvas.h"
 #include "image_decode.h"
 #include <algorithm>
@@ -50,6 +51,13 @@ OverlayFontCandidates overlay_font_candidates() {
     c.regular = {extra / "Arial.ttf", "/System/Library/Fonts/WebFonts/Arial.ttf"};
     c.bold = {extra / "Arial Bold.ttf", "/System/Library/Fonts/WebFonts/ArialBold.ttf"};
     c.cjk = {fonts / "ヒラギノ角ゴシック W3.ttc", fonts / "STHeiti Light.ttc", fonts / "Hiragino Sans GB.ttc"};
+#elif defined(__PROSPERO__)
+    // The title carries DejaVu Sans (fonts/ beside eboot.bin); /data/frr-ps5/fonts
+    // is for a font of one's own.
+    c.regular = {"/data/frr-ps5/fonts/DejaVuSans.ttf", "/app0/fonts/DejaVuSans.ttf",
+                 "/data/homebrew/PPSA48220/fonts/DejaVuSans.ttf"};
+    c.bold = {"/data/frr-ps5/fonts/DejaVuSans-Bold.ttf", "/app0/fonts/DejaVuSans-Bold.ttf",
+              "/data/homebrew/PPSA48220/fonts/DejaVuSans-Bold.ttf"};
 #else
     c.regular = {"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
                  "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
@@ -185,6 +193,10 @@ void OverlayFonts::load(const std::vector<fs::path>& regular_files, const std::v
     Impl::load_file(impl_->faces[0], regular_files.empty() ? host.regular : regular_files);
     Impl::load_file(impl_->faces[1], bold_files.empty() ? host.bold : bold_files);
     Impl::load_file(impl_->faces[2], cjk_files.empty() ? host.cjk : cjk_files);
+#ifdef __PROSPERO__
+    std::cerr << "OVERLAY_FONTS regular=" << impl_->faces[0].loaded << " bold=" << impl_->faces[1].loaded
+              << " cjk=" << impl_->faces[2].loaded << '\n';
+#endif
 }
 
 bool OverlayFonts::any() const {

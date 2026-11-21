@@ -19,6 +19,46 @@ extern "C" char __ehdr_start;
 #include <vector>
 #include <utility>
 
+
+namespace {
+// MAIN_WAITS (PS5): for a frame whose main thread was blocked 60 ms or more,
+// how many waits that took and the host backtrace of the longest (offsets in
+// the title, for the link map). Only the main thread writes these.
+struct MainWaits { uint64_t count = 0, over_1ms = 0, total_ns = 0, longest_ns = 0; void* frames[16]; int depth = 0; };
+MainWaits main_waits;
+void record_main_wait(uint64_t guest_id, std::chrono::steady_clock::time_point started) {
+#if defined(__PROSPERO__)
+    if (guest_id != 1) return;
+    const uint64_t ns = uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now() - started).count());
+    ++main_waits.count; main_waits.total_ns += ns;
+    if (ns >= 1000000) ++main_waits.over_1ms;
+    if (ns > main_waits.longest_ns) {
+        main_waits.longest_ns = ns;
+        main_waits.depth = backtrace(main_waits.frames, 16);
+    }
+#else
+    (void)guest_id; (void)started;
+#endif
+}
+}
+extern "C" void frr_report_main_waits(uint64_t blocked_ns, uint32_t frame) {
+#if defined(__PROSPERO__)
+    if (blocked_ns >= 60000000ull) {
+        const uintptr_t base = reinterpret_cast<uintptr_t>(&__ehdr_start);
+        std::ostringstream line;
+        line << "MAIN_WAITS frame=" << frame << " blocked_ms=" << blocked_ns / 1e6 << " waits=" << main_waits.count
+             << " over_1ms=" << main_waits.over_1ms << " longest_ms=" << main_waits.longest_ns / 1e6 << " frames=" << std::hex;
+        for (int i = 0; i < main_waits.depth; ++i) line << "0x" << (reinterpret_cast<uintptr_t>(main_waits.frames[i]) - base) << ',';
+        line << '\n';
+        std::cerr << line.str();
+    }
+    main_waits = MainWaits{};
+#else
+    (void)blocked_ns; (void)frame;
+#endif
+}
+
 namespace sfr {
 std::atomic<uint64_t> GuestExecution::main_thread_ready_wait_ns{0};
 std::atomic<uint64_t> GuestExecution::main_thread_blocked_ns{0};
@@ -340,24 +380,7 @@ void GuestExecution::Lease::run_wait(std::function<void(std::stop_token)> operat
     try { operation(token); }
     catch (...) { count_wait(); throw; }
     count_wait();
-#if defined(__PROSPERO__)
-    // MAIN_LONG_WAIT: a main-thread wait of 60 ms or more, with the host
-    // return addresses (offsets in the title, for the link map): races stalled
-    // ~160 ms every second in waits WAIT_GRAPH did not see.
-    if (guest_id_ == 1) {
-        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - blocked_at).count();
-        if (ms >= 60) {
-            void* frames[16];
-            const int count = backtrace(frames, 16);
-            const uintptr_t base = reinterpret_cast<uintptr_t>(&__ehdr_start);
-            std::ostringstream line;
-            line << "MAIN_LONG_WAIT ms=" << ms << " frames=" << std::hex;
-            for (int i = 0; i < count; ++i) line << "0x" << (reinterpret_cast<uintptr_t>(frames[i]) - base) << ',';
-            line << '\n';
-            std::cerr << line.str();
-        }
-    }
-#endif
+    record_main_wait(guest_id_, blocked_at);
     if (token.stop_requested()) throw GuestExecutionCancelled();
 }
 
@@ -403,6 +426,7 @@ void GuestExecution::Lease::run_blocking(std::function<void(std::stop_token)> op
     if (guest_id_ == 1)
         main_thread_blocked_ns.fetch_add(uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - blocked_at).count()), std::memory_order_relaxed);
+    record_main_wait(guest_id_, blocked_at);
 
     std::unique_lock lock(state_->mutex);
     const auto blocked = std::find_if(state_->blocked.begin(), state_->blocked.end(), [&](const auto& entry) {

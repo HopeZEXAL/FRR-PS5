@@ -58,6 +58,7 @@ PPC_FUNC_IMPL(__imp__sub_824ED770);
 PPC_FUNC_IMPL(__imp__sub_824ED588);
 PPC_FUNC_IMPL(__imp__sub_82500B38);
 
+extern "C" void frr_report_main_waits(uint64_t blocked_ns, uint32_t frame);
 namespace sfr {
 std::string graphics_lock_report(uint64_t present, unsigned frames);  // diagnostic_main.cpp
 bool graphics_trace() {
@@ -843,6 +844,7 @@ SFR_GRAPHICS_HOST_HOOK(sub_824E65A0) {
     const auto execution_work=sfr::take_guest_execution_timings();
     const auto queued_ns=sfr::GuestExecution::main_thread_ready_wait_ns.exchange(0,std::memory_order_relaxed);
     const auto blocked_ns=sfr::GuestExecution::main_thread_blocked_ns.exchange(0,std::memory_order_relaxed);
+    frr_report_main_waits(blocked_ns,uint32_t(sfr::present_count.load()));
     const auto gpu_ns=sfr::main_gpu_wait_ns.exchange(0,std::memory_order_relaxed);
 #ifdef __ANDROID__
     // Quiet Android runs still provide useful phone-export evidence. Reuse

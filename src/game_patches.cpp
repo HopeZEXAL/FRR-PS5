@@ -371,6 +371,8 @@ SFR_CONCURRENT_HOOK(sub_82817B48) {
 // before its next wait. Keep batches and helper queue reads alive together;
 // exclusion applies only to deferred deletion, not between helpers.
 extern "C" void frr_describe_guest(uint32_t id, char* out, size_t size);
+extern "C" void frr_sampler_register(uint32_t id);
+extern "C" int frr_sampler_sample(uint32_t id, uint64_t* out, int max);
 namespace {
 sfr::JobLifetime job_lifetime;
 thread_local std::optional<sfr::JobLifetime::Lease> helper_lifetime;
@@ -387,6 +389,10 @@ uint64_t lease_now_ns() {
 void note_helper_lease(bool held) {
     const uint32_t id=sfr::current_guest_thread_id();
     if(id<64) lease_since_ns[id].store(held?lease_now_ns():0,std::memory_order_relaxed);
+#if defined(__PROSPERO__)
+    static thread_local bool sampler_registered=false;
+    if(held && !sampler_registered) { frr_sampler_register(id); sampler_registered=true; }
+#endif
 }
 void report_lease_holders(double waited_ms) {
     const uint64_t now=lease_now_ns();
@@ -633,6 +639,10 @@ SFR_CONCURRENT_HOOK(sub_823B5D40) {
     acquire_lifetime(batch);
     batch_holder.store(sfr::current_guest_thread_id(),std::memory_order_relaxed);
     batch_since_ns.store(lease_now_ns(),std::memory_order_relaxed);
+#if defined(__PROSPERO__)
+    static thread_local bool sampler_registered=false;
+    if(!sampler_registered) { frr_sampler_register(sfr::current_guest_thread_id()); sampler_registered=true; }
+#endif
     struct BatchHeld { ~BatchHeld() { batch_since_ns.store(0,std::memory_order_relaxed); } } batch_held;
     collision_batch_running();
     static std::atomic<bool> reported{false};
@@ -721,10 +731,41 @@ SFR_CONCURRENT_HOOK(sub_8249FD50) {
     if(!deletion.try_acquire()) {
         const auto started=std::chrono::steady_clock::now();
         int reported=0;
+        // DELETION_SAMPLES (PS5): where the holders are, sampled once a wait
+        // round after 30 ms, for the first stalls.
+        static int sampled_stalls=0;
+        std::ostringstream samples;
+        int sample_count=0;
+        uint32_t next_holder=0;
         while(!deletion.try_acquire()) {
             lifetime_wait();
             const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
             if((reported==0 && ms>=40) || (reported==1 && ms>=80) || (reported==2 && ms>=120)) { report_lease_holders(ms); ++reported; }
+#if defined(__PROSPERO__)
+            if(ms>=30 && sampled_stalls<12 && sample_count<60) {
+                uint32_t holder=0;
+                for(uint32_t step=0;step<64 && !holder;++step) {
+                    const uint32_t id=(next_holder+step)%64;
+                    if(lease_since_ns[id].load(std::memory_order_relaxed) || (id==batch_holder.load(std::memory_order_relaxed) && batch_since_ns.load(std::memory_order_relaxed)))
+                        holder=id;
+                }
+                if(holder) {
+                    next_holder=holder+1;
+                    uint64_t frames[13];
+                    const int n=frr_sampler_sample(holder,frames,13);
+                    samples << holder << ':' << std::hex;
+                    for(int i=0;i<n;++i) samples << (i?">":"") << frames[i];
+                    samples << std::dec << ';';
+                    ++sample_count;
+                }
+            }
+#endif
+        }
+        if(sample_count) {
+            ++sampled_stalls;
+            std::cerr << "DELETION_SAMPLES frame=" << sfr::present_count.load() << " ms="
+                      << std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count()
+                      << " samples=" << samples.str() << '\n';
         }
     }
     // Keep admission closed through derived destructors and the original

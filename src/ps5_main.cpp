@@ -13,6 +13,9 @@
 // A title has no command line and no environment, so this sets both up and
 // calls the game's own main (diagnostic_main.cpp, compiled as sfr_game_main),
 // as android_main.cpp does on Android.
+#include <condition_variable>
+#include <mutex>
+#include <thread>
 #include "installer.h"
 #include "launcher_settings.h"
 
@@ -149,17 +152,51 @@ protected:
     int sync() override { flush_line(); return 0; }
 private:
     static std::string& line() { thread_local std::string pending; return pending; }
+    // Lines are queued and written by a thread of their own: a write to
+    // /data sometimes took 150-170 ms (build 29's PRESENT_STALL samples: the
+    // main thread inside this write), and every thread that logged waited for
+    // it. Past 16 MiB queued, lines are dropped and counted (LOG_DROPPED).
     void flush_line() {
         std::string& pending = line();
-        size_t done = 0;
-        while (done < pending.size()) {
-            const ssize_t wrote = ::write(fd_, pending.data() + done, pending.size() - done);
-            if (wrote <= 0) break;
-            done += size_t(wrote);
+        if (pending.empty()) return;
+        {
+            std::lock_guard lock(queue_mutex_);
+            if (queued_.size() + pending.size() > (16u << 20)) ++dropped_;
+            else queued_.append(pending);
+            if (!writer_started_) {
+                writer_started_ = true;
+                std::thread([this] { write_loop(); }).detach();
+            }
         }
+        queue_ready_.notify_one();
         pending.clear();
     }
+    void write_loop() {
+        std::string writing;
+        for (;;) {
+            uint64_t dropped = 0;
+            {
+                std::unique_lock lock(queue_mutex_);
+                queue_ready_.wait(lock, [&] { return !queued_.empty() || dropped_; });
+                writing.swap(queued_);
+                dropped = std::exchange(dropped_, 0);
+            }
+            if (dropped) writing += "LOG_DROPPED lines=" + std::to_string(dropped) + "\n";
+            size_t done = 0;
+            while (done < writing.size()) {
+                const ssize_t wrote = ::write(fd_, writing.data() + done, writing.size() - done);
+                if (wrote <= 0) break;
+                done += size_t(wrote);
+            }
+            writing.clear();
+        }
+    }
     int fd_;
+    std::mutex queue_mutex_;
+    std::condition_variable queue_ready_;
+    std::string queued_;
+    uint64_t dropped_ = 0;
+    bool writer_started_ = false;
 };
 }  // namespace
 

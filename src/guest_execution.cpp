@@ -1,3 +1,8 @@
+#if defined(__PROSPERO__)
+#include <sstream>
+extern "C" int backtrace(void** buffer, int size);
+extern "C" char __ehdr_start;
+#endif
 #include "guest_execution.h"
 #include <iostream>
 #include <algorithm>
@@ -335,6 +340,24 @@ void GuestExecution::Lease::run_wait(std::function<void(std::stop_token)> operat
     try { operation(token); }
     catch (...) { count_wait(); throw; }
     count_wait();
+#if defined(__PROSPERO__)
+    // MAIN_LONG_WAIT: a main-thread wait of 60 ms or more, with the host
+    // return addresses (offsets in the title, for the link map): races stalled
+    // ~160 ms every second in waits WAIT_GRAPH did not see.
+    if (guest_id_ == 1) {
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - blocked_at).count();
+        if (ms >= 60) {
+            void* frames[16];
+            const int count = backtrace(frames, 16);
+            const uintptr_t base = reinterpret_cast<uintptr_t>(&__ehdr_start);
+            std::ostringstream line;
+            line << "MAIN_LONG_WAIT ms=" << ms << " frames=" << std::hex;
+            for (int i = 0; i < count; ++i) line << "0x" << (reinterpret_cast<uintptr_t>(frames[i]) - base) << ',';
+            line << '\n';
+            std::cerr << line.str();
+        }
+    }
+#endif
     if (token.stop_requested()) throw GuestExecutionCancelled();
 }
 

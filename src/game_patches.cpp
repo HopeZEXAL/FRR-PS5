@@ -1040,6 +1040,32 @@ static void race_track() {
 
 static void test_player_breakaway();
 static void test_player_rings();
+// SFR_DUMP_RACER=1: once a race, 10 s in, the first local player's racer
+// (0x0000-0x0D00) and live gear (0x000-0x200) as words (RACER_DUMP lines),
+// for finding fields by comparing races (a gear part on or off).
+static void dump_player_racer() {
+    static const bool on=[]{ const char* t=std::getenv("SFR_DUMP_RACER"); return t && *t=='1'; }();
+    if(!on || !sfr::active_memory) return;
+    auto& memory=*sfr::active_memory;
+    static uint32_t last_racer=0, frames=0;
+    const auto racers=sfr::avatar_state_detail::local_racers(memory);
+    if(!racers || !racers->populated_count || !racers->local_count) { frames=0; return; }
+    const uint32_t racer=memory.load<uint32_t>(uint64_t(racers->begin));
+    if(!racer || racer==last_racer) return;
+    if(++frames<600) return;
+    last_racer=racer; frames=0;
+    const auto dump=[&](const char* what,uint32_t at,uint32_t size){
+        if(!at || !memory.readable(at,size)) return;
+        for(uint32_t offset=0;offset<size;offset+=64) {
+            std::ostringstream line;
+            line << "RACER_DUMP " << what << " +" << std::hex << offset << ':';
+            for(uint32_t word=0;word<64;word+=4) line << ' ' << memory.load<uint32_t>(uint64_t(at)+offset+word);
+            std::cerr << line.str() << '\n';
+        }
+    };
+    dump("racer",racer,0xD00);
+    dump("gear",memory.load<uint32_t>(racer+3216),0x200);
+}
 
 // SFR_TEST_RAND_SEED=<n>: the CRT's srand (82A54FA0; rand is 82A54FA0+0x30,
 // a per-thread LCG) seeds with n instead of the value the title passes, so
@@ -1067,6 +1093,7 @@ SFR_CONCURRENT_HOOK(sub_8249F048) {
     race_track();
     test_player_breakaway();
     test_player_rings();
+    dump_player_racer();
     const uint64_t collision_started=steady_ns();
     wait_for_collision_batch(ctx,base);
     const uint64_t collision_ns=steady_ns()-collision_started;
@@ -2012,6 +2039,33 @@ void chaos_mod_super_types(uint32_t ability) {
         if(reported++<8) std::cerr << "GAME_PATCH chaos_emerald_super_types racer=0x" << std::hex << racer
                                    << " phase=" << std::dec << phase << " mask=0x" << std::hex << mask << std::dec << '\n';
     }
+}
+// SFR_MOD_CHAOS_TRANSFORM_RINGS=N (31-999): Sonic turns into Super Sonic at
+// N rings, not 30. 82296348 (the Chaos Emeralds' racer update; r3 its state,
+// +52 0 while Sonic, r4 the racer, rings at +2180) compares the rings with an
+// immediate 30; while Sonic has 30 to N-1 the call sees 29, and the rings it
+// adds or takes in the meantime are kept.
+PPC_FUNC_IMPL(__imp__sub_82296348);
+SFR_CONCURRENT_HOOK(sub_82296348) {
+    static const int32_t threshold=[]{
+        const char* t=std::getenv("SFR_MOD_CHAOS_TRANSFORM_RINGS");
+        if(!t || !*t || std::getenv("SFR_LIVE_HOST") && *std::getenv("SFR_LIVE_HOST") || std::getenv("SFR_LIVE_SERVER") && *std::getenv("SFR_LIVE_SERVER")) return 0;
+        const long n=std::strtol(t,nullptr,10);
+        return n>30 && n<1000 ? int32_t(n) : 0;
+    }();
+    auto& memory=*sfr::active_memory;
+    if(threshold && memory.load<uint32_t>(ctx.r3.u32+52)==0) {
+        const uint32_t racer=ctx.r4.u32;
+        const int32_t rings=int32_t(memory.load<uint32_t>(racer+2180));
+        if(rings>=30 && rings<threshold) {
+            memory.store<uint32_t>(racer+2180,29);
+            __imp__sub_82296348(ctx,base);
+            const int32_t after=int32_t(memory.load<uint32_t>(racer+2180));
+            memory.store<uint32_t>(racer+2180,uint32_t(rings+(after-29)));
+            return;
+        }
+    }
+    __imp__sub_82296348(ctx,base);
 }
 PPC_FUNC_IMPL(__imp__sub_82297B90);
 SFR_CONCURRENT_HOOK(sub_82297B90) { apply_chaos_emerald_mod(); __imp__sub_82297B90(ctx,base); }

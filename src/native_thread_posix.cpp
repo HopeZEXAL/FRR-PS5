@@ -28,6 +28,8 @@
 
 #ifdef __PROSPERO__
 #include <sys/mman.h>
+#include <map>
+#include <mutex>
 #endif
 #ifdef __PROSPERO__
 // The PS5 is FreeBSD underneath (a processor set is a cpuset_t), but a title
@@ -60,6 +62,19 @@ void ps5_set_from_mask(uint64_t mask, cpu_set_t* set) {
 int sched_getaffinity(pid_t, size_t, cpu_set_t* set) {
     ps5_set_from_mask(ps5_process_mask, set);
     return 0;
+}
+// A guest thread's processor is remembered, as on macOS, but not applied:
+// the PS5 schedules a title's threads without time slices between equals,
+// and guest threads pinned together (FRR pins each to one processor) starved
+// one another. Build 12 drew the white loading screen at 60 fps for minutes
+// while the title's loading never finished; Unleashed Recompiled's PS5 port
+// does not pin its threads either.
+std::mutex apple_affinity_lock;
+std::map<pthread_t, cpu_set_t> apple_affinity;
+cpu_set_t all_processors() {
+    cpu_set_t set;
+    ps5_set_from_mask(ps5_process_mask, &set);
+    return set;
 }
 }
 #endif
@@ -107,7 +122,7 @@ std::atomic<uint32_t> next_id{1};
 // Bionic (Android) has no pthread_*affinity_np; a thread's kernel id works
 // with sched_*affinity there.
 static int set_thread_affinity(pthread_t thread, const cpu_set_t& set) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__PROSPERO__)
     std::lock_guard lock(apple_affinity_lock);
     apple_affinity[thread] = set;
     return 0;
@@ -123,7 +138,7 @@ static int set_thread_affinity(pthread_t thread, const cpu_set_t& set) {
 #endif
 }
 static int get_thread_affinity(pthread_t thread, cpu_set_t& set) {
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(__PROSPERO__)
     std::lock_guard lock(apple_affinity_lock);
     const auto found = apple_affinity.find(thread);
     set = found != apple_affinity.end() ? found->second : all_processors();

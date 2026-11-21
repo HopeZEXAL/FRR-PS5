@@ -936,15 +936,28 @@ void NativeRenderer::Impl::set_texture(uint32_t index, plume::RenderTexture* tex
 void NativeRenderer::Impl::save_manifest() noexcept {
     manifest_saved_at = std::chrono::steady_clock::now();
     if (!manifest_dirty || learned_manifest.empty()) return;
+    // Written by a thread of its own from a copy (the PS5 took 150-600 ms in
+    // this write, on the main thread, between frames). One save at a time; a
+    // save still running leaves the manifest dirty for the next look.
+    static std::atomic<bool> saving{false};
+    if (saving.exchange(true)) return;
     try {
-        std::vector<PipelineRecipe> entries;
-        entries.reserve(recipes.size());
-        for (const auto& [key, recipe] : recipes) entries.push_back(recipe);
-        const bool saved = save_pipeline_manifest_file(learned_manifest, entries, uint32_t(graphics.backend()));
-        if (saved) manifest_dirty = false;
-        std::cerr << "PIPELINE_MANIFEST saved=" << saved << " recipes=" << entries.size()
-                  << " path=" << learned_manifest.generic_string() << '\n';
+        auto entries = std::make_shared<std::vector<PipelineRecipe>>();
+        entries->reserve(recipes.size());
+        for (const auto& [key, recipe] : recipes) entries->push_back(recipe);
+        manifest_dirty = false;
+        std::thread([entries, path = learned_manifest, backend = uint32_t(graphics.backend())] {
+            try {
+                const bool saved = save_pipeline_manifest_file(path, *entries, backend);
+                std::cerr << "PIPELINE_MANIFEST saved=" << saved << " recipes=" << entries->size()
+                          << " path=" << path.generic_string() << '\n';
+            } catch (const std::exception& error) {
+                std::cerr << "PIPELINE_MANIFEST save_failed=" << error.what() << '\n';
+            }
+            saving.store(false);
+        }).detach();
     } catch (const std::exception& error) {
+        saving.store(false);
         std::cerr << "PIPELINE_MANIFEST save_failed=" << error.what() << '\n';
     }
 }

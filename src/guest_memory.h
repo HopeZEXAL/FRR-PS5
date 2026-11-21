@@ -280,10 +280,21 @@ private:
     std::unique_ptr<uint32_t[]> fault_epochs_;
     std::unique_ptr<uint8_t[]> fault_streaks_;
     void disarm_watch(uint64_t address, uint64_t size) const;
+    // The granularity of the write watches' page protection: the host page,
+    // except on the PS5, whose 64 KiB backing pages protect in 16 KiB kernel
+    // pages (a 64 KiB watch opened textures beside every buffer the CPU wrote).
+    // A function, not a member, so the class layout is unchanged.
+    uint64_t watch_page_size() const {
+#if defined(__PROSPERO__)
+        return page_size_ < 0x4000 ? page_size_ : 0x4000;
+#else
+        return page_size_;
+#endif
+    }
     // No guest page of the host page holding address is watched or armed:
     // a store there has nothing to record (mark_written would do nothing).
     bool unwatched_page(uint64_t address) const {
-        const uint64_t per_host = page_size_ / fast_page_size;
+        const uint64_t per_host = watch_page_size() / fast_page_size;
         const uint64_t first = address / fast_page_size / per_host * per_host;
         uint8_t bits = 0;
         for (uint64_t page = first; page < first + per_host; ++page)

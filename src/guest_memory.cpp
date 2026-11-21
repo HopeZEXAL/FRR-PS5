@@ -1516,7 +1516,7 @@ void install_watch_handler(GuestMemory* memory) {
 void GuestMemory::arm_watch(uint64_t first_page, uint64_t last_page) {
     install_watch_handler(this);
     // Protection works in host pages, which may hold several 4 KiB guest pages.
-    const uint64_t per_host = page_size_ / fast_page_size;
+    const uint64_t per_host = watch_page_size() / fast_page_size;
     {
         WatchLock lock;
         if (!fault_epochs_) {
@@ -1534,10 +1534,10 @@ void GuestMemory::arm_watch(uint64_t first_page, uint64_t last_page) {
     };
     const auto protect_run = [&](uint64_t begin, uint64_t end) {
         if (begin == end) return;
-        if (protect_pages(base_ + begin * page_size_, (end - begin) * page_size_, true)) { mark(begin, end); return; }
+        if (protect_pages(base_ + begin * watch_page_size(), (end - begin) * watch_page_size(), true)) { mark(begin, end); return; }
         // A run across two allocations: each host page on its own.
         for (uint64_t host = begin; host < end; ++host)
-            if (protect_pages(base_ + host * page_size_, page_size_, true)) mark(host, host + 1);
+            if (protect_pages(base_ + host * watch_page_size(), watch_page_size(), true)) mark(host, host + 1);
     };
     // The lock is taken for at most 64 host pages at a time: a thread whose
     // write faults on any watched page waits for it, and a Kinect thread
@@ -1566,7 +1566,7 @@ void GuestMemory::arm_watch(uint64_t first_page, uint64_t last_page) {
 
 void GuestMemory::disarm_watch(uint64_t address, uint64_t size) const {
     if (!direct_guest_access || !size) return;
-    const uint64_t per_host = page_size_ / fast_page_size;
+    const uint64_t per_host = watch_page_size() / fast_page_size;
     const uint64_t first = address / fast_page_size / per_host * per_host;
     const uint64_t last = (std::min)((address + size - 1) / fast_page_size, address_space_size / fast_page_size - 1);
     // Every checked store comes here: without an armed page there is nothing
@@ -1585,15 +1585,15 @@ void GuestMemory::disarm_watch(uint64_t address, uint64_t size) const {
 
 bool GuestMemory::handle_watch_fault(uintptr_t host_address) noexcept {
     if (host_address < uintptr_t(base_) || host_address - uintptr_t(base_) >= address_space_size) return false;
-    const uint64_t per_host = page_size_ / fast_page_size;
-    const uint64_t first = (host_address - uintptr_t(base_)) / page_size_ * per_host;
+    const uint64_t per_host = watch_page_size() / fast_page_size;
+    const uint64_t first = (host_address - uintptr_t(base_)) / watch_page_size() * per_host;
     WatchLock lock;
     // Ours whenever any guest page in it is watched: an arm racing an earlier
     // fault can leave a protected page with its armed bit already cleared.
     bool watched = false;
     for (uint64_t page = first; page < first + per_host; ++page) watched |= (watched_pages_[page] & 1) != 0;
     if (!watched) return false;
-    if (!protect_pages(base_ + first * fast_page_size, page_size_, false)) return false;
+    if (!protect_pages(base_ + first * fast_page_size, watch_page_size(), false)) return false;
     for (uint64_t page = first; page < first + per_host; ++page) {
         std::atomic_ref<uint8_t>(watched_pages_[page]).fetch_and(uint8_t(~watch_armed), std::memory_order_relaxed);
         if (watched_pages_[page] & 1) note_watched_write(page);

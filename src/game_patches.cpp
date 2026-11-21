@@ -2067,6 +2067,11 @@ void chaos_mod_super_types(uint32_t ability) {
         }
         const uint32_t abilities=memory.load<uint32_t>(gear+172);
         if(!(abilities&0x8)) memory.store<uint32_t>(gear+172,abilities|0x8);
+        static uint32_t calls=0;
+        if(calls++%300==0 && calls<6000)
+            std::cerr << "MAGNET_STATE racer=0x" << std::hex << racer << " gear=0x" << gear << " phase=" << std::dec << phase
+                      << " own=0x" << std::hex << memory.load<uint32_t>(gear+352) << " abilities_before=0x" << abilities
+                      << " flags=0x" << memory.load<uint32_t>(racer+2216) << std::dec << '\n';
     }
     if(!chaos_mod_types()) return;
     const uint32_t mask=memory.load<uint32_t>(gear+168);
@@ -2175,6 +2180,11 @@ PPC_FUNC_IMPL(__imp__sub_822D48D0);
 SFR_CONCURRENT_HOOK(sub_822D48D0) {
     auto& memory=*sfr::active_memory;
     const uint32_t racer=memory.load<uint32_t>(ctx.r3.u32+80);
+    {
+        static std::array<uint32_t,8> seen{};
+        for(auto& r:seen) { if(r==racer) break; if(!r) { r=racer; std::cerr << "MAGNET_EFFECT object=0x" << std::hex << ctx.r3.u32
+            << " racer=0x" << racer << " chaos=" << chaos_racer(racer) << std::dec << '\n'; break; } }
+    }
     if(!chaos_magnet_racer(racer)) { __imp__sub_822D48D0(ctx,base); return; }
     const uint32_t flags=memory.load<uint32_t>(racer+2216);
     static int told=0;

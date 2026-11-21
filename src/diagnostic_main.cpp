@@ -444,6 +444,22 @@ static void note_activity(const char* what, uint32_t detail = 0) {
 // is asked for, so the ordinary entry path pays a branch and nothing else.
 static void note_function(uint32_t address) { own_activity().function.store(address, std::memory_order_relaxed); }
 static void note_finished() { own_activity().finished.store(true, std::memory_order_relaxed); }
+}  // namespace sfr
+// For game_patches.cpp's DELETION_WAIT: what the given guest is inside (an
+// import, and whether in a native wait) as id:import@address/blocked.
+extern "C" void frr_describe_guest(uint32_t id, char* out, size_t size) {
+    if (!size) return;
+    out[0] = 0;
+    std::lock_guard guard(sfr::activity_lock);
+    for (const auto* record : sfr::activities) {
+        if (record->id != id || record->finished.load(std::memory_order_relaxed)) continue;
+        const char* doing = record->doing.load(std::memory_order_relaxed);
+        std::snprintf(out, size, "%s@%x%s", doing ? doing : "guest", record->detail.load(std::memory_order_relaxed),
+                      record->blocked.load(std::memory_order_relaxed) ? "/blocked" : "");
+        return;
+    }
+}
+namespace sfr {
 
 // SFR_PARALLEL_WORKER=1: the title's job worker (thread entry 0x8222E008)
 // runs its guest code beside the permit's owner, as it would on a console

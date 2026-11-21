@@ -370,6 +370,7 @@ SFR_CONCURRENT_HOOK(sub_82817B48) {
 // actor contexts the next frame's deferred deletion would otherwise destroy
 // before its next wait. Keep batches and helper queue reads alive together;
 // exclusion applies only to deferred deletion, not between helpers.
+extern "C" void frr_describe_guest(uint32_t id, char* out, size_t size);
 namespace {
 sfr::JobLifetime job_lifetime;
 thread_local std::optional<sfr::JobLifetime::Lease> helper_lifetime;
@@ -393,9 +394,18 @@ void report_lease_holders(double waited_ms) {
     line << "DELETION_WAIT ms=" << waited_ms << " frame=" << sfr::present_count.load() << " helpers=";
     for(uint32_t id=0;id<64;++id) {
         const uint64_t since=lease_since_ns[id].load(std::memory_order_relaxed);
-        if(since) line << id << ':' << double(now-since)/1e6 << ',';
+        if(since) {
+            char doing[96];
+            frr_describe_guest(id,doing,sizeof(doing));
+            line << id << ':' << double(now-since)/1e6 << ':' << doing << ',';
+        }
     }
     const uint64_t batch_since=batch_since_ns.load(std::memory_order_relaxed);
+    {
+        char doing[96];
+        frr_describe_guest(batch_holder.load(std::memory_order_relaxed),doing,sizeof(doing));
+        line << " batch_doing=" << doing;
+    }
     line << " batch=" << batch_holder.load(std::memory_order_relaxed) << " batch_ms="
          << (batch_since?double(now-batch_since)/1e6:0.0) << '\n';
     std::cerr << line.str();
@@ -710,11 +720,11 @@ SFR_CONCURRENT_HOOK(sub_8249FD50) {
     sfr::JobLifetime::Lease deletion(job_lifetime,sfr::JobLifetime::Kind::deletion);
     if(!deletion.try_acquire()) {
         const auto started=std::chrono::steady_clock::now();
-        bool reported=false;
+        int reported=0;
         while(!deletion.try_acquire()) {
             lifetime_wait();
             const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
-            if(!reported && ms>=60) { report_lease_holders(ms); reported=true; }
+            if((reported==0 && ms>=40) || (reported==1 && ms>=80) || (reported==2 && ms>=120)) { report_lease_holders(ms); ++reported; }
         }
     }
     // Keep admission closed through derived destructors and the original

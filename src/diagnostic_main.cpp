@@ -1095,11 +1095,29 @@ uint64_t read_time_base() {
         std::cerr << "TIME_BASE ticks=" << ticks << " frequency=" << GuestClock::frequency << '\n';
     return ticks;
 }
+// The two guest words it reads (the PCR's current thread, that thread's id)
+// do not change while a thread runs, so a thread that passed the full check
+// with this context and PCR repeats only the cheap part, with the full check
+// every 4096th call. Those words sit on pages the checked path serves, under
+// the layout lock: the race's job queue (82750470, a reserved load and store
+// per try) had four threads queueing on that lock for 150 ms at a time on the
+// PS5. SFR_RESERVATION_CHECK_CACHE=0 checks fully every time.
 static void check_reservation_context(const PPCContext& ctx) {
-    if (!execution_permit || current_context != &ctx || !active_memory || ctx.r13.u32 != current_pcr ||
-        active_memory->load<uint32_t>(uint64_t(current_pcr) + 0x100) != current_thread ||
-        active_memory->load<uint32_t>(uint64_t(current_thread) + 0x14c) != current_id)
+    static const bool cache = [] { const char* t = std::getenv("SFR_RESERVATION_CHECK_CACHE"); return !t || *t != '0'; }();
+    static thread_local const PPCContext* verified_context = nullptr;
+    static thread_local uint32_t verified_pcr = 0, verified_thread = 0, verified_id = 0, cheap_checks = 0;
+    if (!execution_permit || current_context != &ctx || !active_memory || ctx.r13.u32 != current_pcr)
         throw RuntimeStop("thread-context", ctx.r13.u32, "guest context does not match the executing native thread");
+    if (cache && verified_context == &ctx && verified_pcr == current_pcr && verified_thread == current_thread &&
+        verified_id == current_id && ++cheap_checks < 4096)
+        return;
+    if (active_memory->load<uint32_t>(uint64_t(current_pcr) + 0x100) != current_thread ||
+        active_memory->load<uint32_t>(uint64_t(current_thread) + 0x14c) != current_id) {
+        verified_context = nullptr;
+        throw RuntimeStop("thread-context", ctx.r13.u32, "guest context does not match the executing native thread");
+    }
+    verified_context = &ctx; verified_pcr = current_pcr; verified_thread = current_thread; verified_id = current_id;
+    cheap_checks = 0;
 }
 // Host-driven system threads (argument selects the loop in the thread entry).
 constexpr uint32_t system_thread_audio = 0;

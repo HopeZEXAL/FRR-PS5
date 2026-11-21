@@ -446,7 +446,9 @@ struct NativeRenderer::Impl {
     // (empty without SFR_TEXTURE_MIPS). bytes: the native texture's size.
     struct TextureRange { std::array<uint32_t, 4> key; uint64_t begin, end; uint64_t hash; bool dynamic;
                           uint64_t checked_frame = 0; uint64_t seen_frame = 0; uint32_t epoch = 0;
-                          uint64_t mip_begin = 0, mip_end = 0, bytes = 0; };
+                          uint64_t mip_begin = 0, mip_end = 0, bytes = 0;
+                          // Frames in a row a dynamic texture's hash found it unchanged.
+                          uint32_t quiet_frames = 0; };
     uint64_t texture_bytes = 0;  // native bytes of the textures in texture_ranges
     uint64_t frame = 1;  // counts flushes
     // Opt-in probe only: compare CPU bytes, never read write-combined uploads.
@@ -1970,6 +1972,30 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
             const uint64_t size = range.end - range.begin;
             const uint32_t source = guest_view(memory, uint32_t(range.begin), size);
             written = content_hash(memory.base() + source, size) != range.hash;
+            // Memory reused during a load marks every texture later placed
+            // there dynamic, and a race then hashed tens of megabytes each
+            // frame (about 10 ms on the PS5). One unchanged for a second is
+            // left to the watched pages, as other textures are: written_since
+            // reports any page that is not watched and armed as written, so
+            // a write it cannot see still reaches the hash above.
+            static const bool demote = [] {
+                const char* t = std::getenv("SFR_TEXTURE_DYNAMIC_DEMOTE"); return !t || *t != '0'; }();
+            static uint64_t checks = 0, checked_bytes = 0, demoted = 0;
+            ++checks; checked_bytes += size;
+            range.quiet_frames = written ? 0 : range.quiet_frames + 1;
+            if (demote && range.quiet_frames >= 60) {
+                range.dynamic = false;
+                range.epoch = memory.write_epoch();
+                views(uint32_t(range.begin), range.end - range.begin,
+                      [&](uint64_t view) { memory.watch_writes(view, range.end - range.begin); });
+                ++demoted;
+            }
+            static uint64_t reported_frame = 0;
+            if (impl_->frame >= reported_frame + 600) {
+                reported_frame = impl_->frame;
+                std::cerr << "TEXTURE_DYNAMIC frame=" << impl_->frame << " checks=" << checks
+                          << " checked_mb=" << checked_bytes / (1024 * 1024) << " demoted=" << demoted << '\n';
+            }
         }
         static const bool no_cache = std::getenv("SFR_TEXTURE_NO_CACHE") != nullptr;
         if (!written && !(fetch.format == 2 && no_cache)) return found->second;

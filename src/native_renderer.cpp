@@ -448,7 +448,10 @@ struct NativeRenderer::Impl {
                           uint64_t checked_frame = 0; uint64_t seen_frame = 0; uint32_t epoch = 0;
                           uint64_t mip_begin = 0, mip_end = 0, bytes = 0;
                           // Frames in a row a dynamic texture's hash found it unchanged.
-                          uint32_t quiet_frames = 0; };
+                          uint32_t quiet_frames = 0;
+                          // The views of begin..end found readable, and the frame they were
+                          // looked for (readable() on unmapped views cost ~10 ms a race frame).
+                          uint8_t view_mask = 0; uint64_t views_frame = 0; };
     uint64_t texture_bytes = 0;  // native bytes of the textures in texture_ranges
     uint64_t frame = 1;  // counts flushes
     // Opt-in probe only: compare CPU bytes, never read write-combined uploads.
@@ -1966,6 +1969,29 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
             visit(candidate);
         }
     };
+    static const bool cache_views = [] { const char* t = std::getenv("SFR_TEXTURE_VIEW_CACHE"); return !t || *t != '0'; }();
+    // views() for a cached texture's base range: the readable views found
+    // before, looked for again every 120 frames (a mapping changing between
+    // looks is rare, and freed memory invalidates the texture first).
+    const auto base_views = [&](auto& range, const auto& visit) {
+        const uint64_t size = range.end - range.begin;
+        if (!cache_views) return views(uint32_t(range.begin), size, visit);
+        if (!range.views_frame || impl_->frame >= range.views_frame + 120) {
+            range.view_mask = 0;
+            range.views_frame = impl_->frame | 1;
+            const uint32_t physical = uint32_t(range.begin);
+            const uint64_t candidates[3] = {uint64_t(physical) + 0xE0000000u - 0x1000u, uint64_t(physical) | 0xA0000000u,
+                                            uint64_t(physical) | 0xC0000000u};
+            for (int i = 0; i < 3; ++i)
+                if (candidates[i] + size <= 0x100000000ull && memory.readable(candidates[i], size))
+                    range.view_mask |= uint8_t(1u << i);
+        }
+        const uint32_t physical = uint32_t(range.begin);
+        const uint64_t candidates[3] = {uint64_t(physical) + 0xE0000000u - 0x1000u, uint64_t(physical) | 0xA0000000u,
+                                        uint64_t(physical) | 0xC0000000u};
+        for (int i = 0; i < 3; ++i)
+            if (range.view_mask & (1u << i)) visit(candidates[i]);
+    };
     if (auto found = impl_->texture_indices.find(key); found != impl_->texture_indices.end()) {
         // The CPU may rewrite a texture in place (movie frames) without a lock:
         // watched pages report it and the texture is uploaded again.
@@ -1983,7 +2009,7 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
         // write from the others.
         const uint32_t now = memory.write_epoch();
         bool written = false;
-        views(uint32_t(range.begin), range.end - range.begin, [&](uint64_t view) {
+        base_views(range, [&](uint64_t view) {
             written |= memory.written_since(view, range.end - range.begin, range.epoch);
         });
         if (range.mip_end > range.mip_begin)
@@ -1994,8 +2020,7 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
         if (written) {
             range.epoch = now;
             // Protected again where page protection records the writes.
-            views(uint32_t(range.begin), range.end - range.begin,
-                  [&](uint64_t view) { memory.watch_writes(view, range.end - range.begin); });
+            base_views(range, [&](uint64_t view) { memory.watch_writes(view, range.end - range.begin); });
             if (range.mip_end > range.mip_begin)
                 views(uint32_t(range.mip_begin), range.mip_end - range.mip_begin,
                       [&](uint64_t view) { memory.watch_writes(view, range.mip_end - range.mip_begin); });

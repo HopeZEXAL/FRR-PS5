@@ -1118,8 +1118,8 @@ bool GuestMemory::readable(uint64_t address, uint64_t size) const noexcept {
            (std::atomic_ref<uint8_t>(fast_pages_[page]).load(std::memory_order_relaxed) & fast_access)) ++page;
     if (page > last) return true;
     const auto layout = read_layout();
-    for (const auto& variable : variables_)
-        if (address < uint64_t(variable.address) + 4 && variable.address < address + size) return false;
+    // Uncommitted first: a binary search, where the import variables are a
+    // scan, and the texture cache asks of two unmapped views per texture.
     uint64_t covered = address;
     const uint64_t end = address + size;
     while (covered < end) {
@@ -1127,6 +1127,8 @@ bool GuestMemory::readable(uint64_t address, uint64_t size) const noexcept {
         if (!r) return false;
         covered = r->address + r->size;
     }
+    for (const auto& variable : variables_)
+        if (address < uint64_t(variable.address) + 4 && variable.address < address + size) return false;
     return true;
 }
 

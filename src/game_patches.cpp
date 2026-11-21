@@ -2007,7 +2007,12 @@ void apply_chaos_emerald_mod() {
             uint32_t exclude=0x8;
             if(const auto text=env("SFR_MOD_CHAOS_EXCLUDE_PARTS"); !text.empty())
                 exclude=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
-            if(slots>0) memory.store<uint32_t>(entry+12,~exclude);
+            uint32_t allowed=~exclude;
+            // SFR_MOD_CHAOS_ALLOWED_PARTS=0xMASK: exactly these parts (a bit
+            // per part id), e.g. 0x8 for the Ring Eater alone.
+            if(const auto text=env("SFR_MOD_CHAOS_ALLOWED_PARTS"); !text.empty())
+                allowed=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
+            if(slots>0) memory.store<uint32_t>(entry+12,allowed);
         }
         std::cerr << "GAME_PATCH chaos_emerald_mod types=0x" << std::hex << old_types << "->0x"
                   << memory.load<uint32_t>(entry+112) << " slots=" << std::dec << old_slots << "->"
@@ -2111,6 +2116,21 @@ SFR_CONCURRENT_HOOK(sub_82296348) {
     }();
     auto& memory=*sfr::active_memory;
     note_chaos_racer(ctx.r4.u32);
+    // With SFR_MOD_CHAOS_SUPER_MAGNET, a Ring Eater on the gear is off while
+    // he is Sonic (state 0): its bit (live gear +172 0x8) is taken after each
+    // update; Super Sonic's ability update puts it back.
+    struct MagnetOff {
+        uint32_t state, racer;
+        ~MagnetOff() {
+            static const bool magnet=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET"); return t && *t=='1'; }();
+            if(!magnet || state!=0 || !racer) return;
+            auto& memory=*sfr::active_memory;
+            const uint32_t gear=memory.load<uint32_t>(racer+3216);
+            if(!gear) return;
+            const uint32_t abilities=memory.load<uint32_t>(gear+172);
+            if(abilities&0x8) memory.store<uint32_t>(gear+172,abilities&~0x8u);
+        }
+    } magnet_off{memory.load<uint32_t>(ctx.r3.u32+52),ctx.r4.u32};
     if(threshold && memory.load<uint32_t>(ctx.r3.u32+52)==0) {
         const uint32_t racer=ctx.r4.u32;
         const int32_t rings=int32_t(memory.load<uint32_t>(racer+2180));

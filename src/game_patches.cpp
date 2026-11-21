@@ -2054,6 +2054,17 @@ void chaos_mod_super_types(uint32_t ability) {
     // Sonic rebuilds the gear without it.
     static const bool magnet=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET"); return t && *t=='1'; }();
     if(magnet) {
+        // +352 is the gear's own abilities (the transformation sets them to
+        // 0x10001, 82296348); +172 is recomputed from them and the parts'
+        // (82297BF8), so the bit goes into both.
+        const uint32_t own=memory.load<uint32_t>(gear+352);
+        if(!(own&0x8)) {
+            memory.store<uint32_t>(gear+352,own|0x8);
+            static int told=0;
+            if(told++<6) std::cerr << "GAME_PATCH chaos_emerald_super_magnet racer=0x" << std::hex << racer << " own=0x" << own
+                                   << " abilities=0x" << memory.load<uint32_t>(gear+172) << " flags=0x"
+                                   << memory.load<uint32_t>(racer+2216) << std::dec << '\n';
+        }
         const uint32_t abilities=memory.load<uint32_t>(gear+172);
         if(!(abilities&0x8)) memory.store<uint32_t>(gear+172,abilities|0x8);
     }
@@ -2127,6 +2138,8 @@ SFR_CONCURRENT_HOOK(sub_82296348) {
             auto& memory=*sfr::active_memory;
             const uint32_t gear=memory.load<uint32_t>(racer+3216);
             if(!gear) return;
+            const uint32_t own=memory.load<uint32_t>(gear+352);
+            if(own&0x8) memory.store<uint32_t>(gear+352,own&~0x8u);
             const uint32_t abilities=memory.load<uint32_t>(gear+172);
             if(abilities&0x8) memory.store<uint32_t>(gear+172,abilities&~0x8u);
         }

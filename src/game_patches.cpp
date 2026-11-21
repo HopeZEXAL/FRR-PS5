@@ -373,8 +373,36 @@ SFR_CONCURRENT_HOOK(sub_82817B48) {
 namespace {
 sfr::JobLifetime job_lifetime;
 thread_local std::optional<sfr::JobLifetime::Lease> helper_lifetime;
+// DELETION_WAIT: who held job leases while the deferred deletion waited 60 ms
+// or more (helpers by guest id with how long they had held theirs, and the
+// collision batch's thread).
+std::atomic<uint64_t> lease_since_ns[64];
+std::atomic<uint32_t> batch_holder{0};
+std::atomic<uint64_t> batch_since_ns{0};
+uint64_t lease_now_ns() {
+    return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+void note_helper_lease(bool held) {
+    const uint32_t id=sfr::current_guest_thread_id();
+    if(id<64) lease_since_ns[id].store(held?lease_now_ns():0,std::memory_order_relaxed);
+}
+void report_lease_holders(double waited_ms) {
+    const uint64_t now=lease_now_ns();
+    std::ostringstream line;
+    line << "DELETION_WAIT ms=" << waited_ms << " frame=" << sfr::present_count.load() << " helpers=";
+    for(uint32_t id=0;id<64;++id) {
+        const uint64_t since=lease_since_ns[id].load(std::memory_order_relaxed);
+        if(since) line << id << ':' << double(now-since)/1e6 << ',';
+    }
+    const uint64_t batch_since=batch_since_ns.load(std::memory_order_relaxed);
+    line << " batch=" << batch_holder.load(std::memory_order_relaxed) << " batch_ms="
+         << (batch_since?double(now-batch_since)/1e6:0.0) << '\n';
+    std::cerr << line.str();
+}
 
 void helper_leaves_job() {
+    if(helper_lifetime) note_helper_lease(false);
     helper_lifetime.reset();
 }
 void lifetime_wait() {
@@ -593,6 +621,9 @@ SFR_CONCURRENT_HOOK(sub_823B5D40) {
     sfr::enter_function(ctx,"sub_823B5D40",0x823B5D40);
     sfr::JobLifetime::Lease batch(job_lifetime,sfr::JobLifetime::Kind::batch);
     acquire_lifetime(batch);
+    batch_holder.store(sfr::current_guest_thread_id(),std::memory_order_relaxed);
+    batch_since_ns.store(lease_now_ns(),std::memory_order_relaxed);
+    struct BatchHeld { ~BatchHeld() { batch_since_ns.store(0,std::memory_order_relaxed); } } batch_held;
     collision_batch_running();
     static std::atomic<bool> reported{false};
     if(!reported.exchange(true))
@@ -630,6 +661,7 @@ static void admit_helper() {
     if(!helper_lifetime) {
         helper_lifetime.emplace(job_lifetime,sfr::JobLifetime::Kind::helper);
         acquire_lifetime(*helper_lifetime);
+        note_helper_lease(true);
     }
 }
 static bool completion_suspend_handoff() {
@@ -676,7 +708,15 @@ SFR_CONCURRENT_HOOK(sub_8249FD50) {
         return;
     }
     sfr::JobLifetime::Lease deletion(job_lifetime,sfr::JobLifetime::Kind::deletion);
-    acquire_lifetime(deletion);
+    if(!deletion.try_acquire()) {
+        const auto started=std::chrono::steady_clock::now();
+        bool reported=false;
+        while(!deletion.try_acquire()) {
+            lifetime_wait();
+            const double ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
+            if(!reported && ms>=60) { report_lease_holders(ms); reported=true; }
+        }
+    }
     // Keep admission closed through derived destructors and the original
     // job removal flags. A queued next batch then removes those jobs before
     // publishing work, rather than acquiring a reference to a freed actor.

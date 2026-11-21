@@ -1980,8 +1980,8 @@ static void test_player_breakaway() {
 //                            the rail check runs for him as for Sonic
 //   SFR_MOD_CHAOS_SLOTS=N    N (0-3) gear-part slots, accepting every part but
 //   SFR_MOD_CHAOS_EXCLUDE_PARTS=0xMASK  these (a bit per part id, the parts
-//                            page's order from 0; default 0x8, the part the
-//                            power-type boards exclude)
+//                            page's order from 0; default 0xE, the grind,
+//                            air ride and power parts)
 // The table is patched once, the first time any of the hooks below runs (the
 // race's gear rebuild and the readers of the slot count). Off online
 // (SFR_LIVE_HOST/SFR_LIVE_SERVER), where every player races by the same rules.
@@ -2004,7 +2004,7 @@ void apply_chaos_emerald_mod() {
         if(types) memory.store<uint32_t>(entry+112,sfr::super_sonic::type_speed);
         if(slots>=0) {
             memory.store<uint32_t>(entry+24,uint32_t(slots));
-            uint32_t exclude=0x8;
+            uint32_t exclude=0xE;  // part ids 1-3: grind, air ride, power (power is 3: build 39)
             if(const auto text=env("SFR_MOD_CHAOS_EXCLUDE_PARTS"); !text.empty())
                 exclude=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
             uint32_t allowed=~exclude;
@@ -2029,14 +2029,7 @@ bool chaos_mod_types() {
     }();
     return on;
 }
-bool chaos_mod_super() {
-    static const bool on=[]{
-        const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET");
-        const auto set=[](const char* n){ const char* v=std::getenv(n); return v && *v; };
-        return chaos_mod_types() || (t && *t=='1' && !set("SFR_LIVE_HOST") && !set("SFR_LIVE_SERVER"));
-    }();
-    return on;
-}
+bool chaos_mod_super() { return chaos_mod_types(); }
 // After an update that left Super Sonic transformed (phase 3 on), his live
 // gear gets all three types; the return to Sonic rebuilds it from the table
 // (speed only).
@@ -2048,31 +2041,6 @@ void chaos_mod_super_types(uint32_t ability) {
     const uint32_t racer=memory.load<uint32_t>(ability+232);
     const uint32_t gear=racer?memory.load<uint32_t>(racer+3216):0;
     if(!gear) return;
-    // The magnet (SFR_MOD_CHAOS_SUPER_MAGNET=1): the Ring Eater part's bit,
-    // 0x8 in the live gear's part abilities (+172; a race with the part had
-    // it, one without did not; 822D48D0 and others test it). The return to
-    // Sonic rebuilds the gear without it.
-    static const bool magnet=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET"); return t && *t=='1'; }();
-    if(magnet) {
-        // +352 is the gear's own abilities (the transformation sets them to
-        // 0x10001, 82296348); +172 is recomputed from them and the parts'
-        // (82297BF8), so the bit goes into both.
-        const uint32_t own=memory.load<uint32_t>(gear+352);
-        if(!(own&0x8)) {
-            memory.store<uint32_t>(gear+352,own|0x8);
-            static int told=0;
-            if(told++<6) std::cerr << "GAME_PATCH chaos_emerald_super_magnet racer=0x" << std::hex << racer << " own=0x" << own
-                                   << " abilities=0x" << memory.load<uint32_t>(gear+172) << " flags=0x"
-                                   << memory.load<uint32_t>(racer+2216) << std::dec << '\n';
-        }
-        const uint32_t abilities=memory.load<uint32_t>(gear+172);
-        if(!(abilities&0x8)) memory.store<uint32_t>(gear+172,abilities|0x8);
-        static uint32_t calls=0;
-        if(calls++%300==0 && calls<6000)
-            std::cerr << "MAGNET_STATE racer=0x" << std::hex << racer << " gear=0x" << gear << " phase=" << std::dec << phase
-                      << " own=0x" << std::hex << memory.load<uint32_t>(gear+352) << " abilities_before=0x" << abilities
-                      << " flags=0x" << memory.load<uint32_t>(racer+2216) << std::dec << '\n';
-    }
     if(!chaos_mod_types()) return;
     const uint32_t mask=memory.load<uint32_t>(gear+168);
     if((mask&sfr::super_sonic::all_types)!=sfr::super_sonic::all_types) {
@@ -2092,6 +2060,21 @@ void note_chaos_racer(uint32_t racer) {
 }
 bool chaos_racer(uint32_t racer) {
     for(auto& slot:chaos_racers) if(slot.load(std::memory_order_relaxed)==racer) return true;
+    return false;
+}
+// Each Chaos Emeralds racer's state at its last update (0 while Sonic).
+std::array<std::atomic<uint64_t>,8> chaos_states{};
+void note_chaos_state(uint32_t racer,uint32_t state) {
+    const uint64_t entry=(uint64_t(racer)<<32)|state;
+    for(auto& slot:chaos_states) if(uint32_t(slot.load(std::memory_order_relaxed)>>32)==racer) { slot.store(entry,std::memory_order_relaxed); return; }
+    for(auto& slot:chaos_states) { uint64_t empty=0; if(slot.compare_exchange_strong(empty,entry)) return; }
+    chaos_states[racer%chaos_states.size()].store(entry,std::memory_order_relaxed);
+}
+bool chaos_super(uint32_t racer) {
+    for(auto& slot:chaos_states) {
+        const uint64_t entry=slot.load(std::memory_order_relaxed);
+        if(uint32_t(entry>>32)==racer) return uint32_t(entry)!=0;
+    }
     return false;
 }
 
@@ -2132,23 +2115,7 @@ SFR_CONCURRENT_HOOK(sub_82296348) {
     }();
     auto& memory=*sfr::active_memory;
     note_chaos_racer(ctx.r4.u32);
-    // With SFR_MOD_CHAOS_SUPER_MAGNET, a Ring Eater on the gear is off while
-    // he is Sonic (state 0): its bit (live gear +172 0x8) is taken after each
-    // update; Super Sonic's ability update puts it back.
-    struct MagnetOff {
-        uint32_t state, racer;
-        ~MagnetOff() {
-            static const bool magnet=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET"); return t && *t=='1'; }();
-            if(!magnet || state!=0 || !racer) return;
-            auto& memory=*sfr::active_memory;
-            const uint32_t gear=memory.load<uint32_t>(racer+3216);
-            if(!gear) return;
-            const uint32_t own=memory.load<uint32_t>(gear+352);
-            if(own&0x8) memory.store<uint32_t>(gear+352,own&~0x8u);
-            const uint32_t abilities=memory.load<uint32_t>(gear+172);
-            if(abilities&0x8) memory.store<uint32_t>(gear+172,abilities&~0x8u);
-        }
-    } magnet_off{memory.load<uint32_t>(ctx.r3.u32+52),ctx.r4.u32};
+    note_chaos_state(ctx.r4.u32,memory.load<uint32_t>(ctx.r3.u32+52));
     if(threshold && memory.load<uint32_t>(ctx.r3.u32+52)==0) {
         const uint32_t racer=ctx.r4.u32;
         const int32_t rings=int32_t(memory.load<uint32_t>(racer+2180));
@@ -2162,47 +2129,17 @@ SFR_CONCURRENT_HOOK(sub_82296348) {
     }
     __imp__sub_82296348(ctx,base);
 }
-// The Ring Eater's effect object (822D48D0 its update, 822D4998 its effect
-// placement; r3+80 the racer) acts only while the live gear has the magnet
-// bit (+172 0x8) and the racer's flags +2216 have 0x1000000. For a Chaos
-// Emeralds racer given the bit (SFR_MOD_CHAOS_SUPER_MAGNET), the update runs
-// with that flag on; the placement of the visible effect is skipped
-// (SFR_MOD_CHAOS_MAGNET_VISIBLE=1 keeps it). MAGNET_EFFECT lines: the first
-// calls for such a racer.
-static bool chaos_magnet_racer(uint32_t racer) {
-    static const bool magnet=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET"); return t && *t=='1'; }();
-    if(!magnet || !racer || !chaos_racer(racer)) return false;
-    auto& memory=*sfr::active_memory;
-    const uint32_t gear=memory.load<uint32_t>(racer+3216);
-    return gear && (memory.load<uint32_t>(gear+172)&0x8);
-}
-PPC_FUNC_IMPL(__imp__sub_822D48D0);
-SFR_CONCURRENT_HOOK(sub_822D48D0) {
-    auto& memory=*sfr::active_memory;
-    const uint32_t racer=memory.load<uint32_t>(ctx.r3.u32+80);
-    {
-        static std::array<uint32_t,8> seen{};
-        for(auto& r:seen) { if(r==racer) break; if(!r) { r=racer; std::cerr << "MAGNET_EFFECT object=0x" << std::hex << ctx.r3.u32
-            << " racer=0x" << racer << " chaos=" << chaos_racer(racer) << std::dec << '\n'; break; } }
-    }
-    if(!chaos_magnet_racer(racer)) { __imp__sub_822D48D0(ctx,base); return; }
-    const uint32_t flags=memory.load<uint32_t>(racer+2216);
-    static int told=0;
-    if(told++<12) std::cerr << "MAGNET_EFFECT update racer=0x" << std::hex << racer << " state=" << std::dec
-                             << memory.load<uint32_t>(ctx.r3.u32+20) << " flags=0x" << std::hex << flags << std::dec << '\n';
-    if(flags&0x1000000) { __imp__sub_822D48D0(ctx,base); return; }
-    memory.store<uint32_t>(racer+2216,flags|0x1000000);
-    __imp__sub_822D48D0(ctx,base);
-    memory.store<uint32_t>(racer+2216,memory.load<uint32_t>(racer+2216)&~0x1000000u);
-}
+// The Ring Eater's effect (822D4998 places the visible shield; r3+80 the
+// racer): on a Chaos Emeralds racer it is not shown while he is Super Sonic
+// (his Chaos Emeralds state, 82296348's r3+52, not 0), and shown while he is
+// Sonic. SFR_MOD_CHAOS_SUPER_SHIELD=1 shows it as Super Sonic too.
 PPC_FUNC_IMPL(__imp__sub_822D4998);
 SFR_CONCURRENT_HOOK(sub_822D4998) {
-    static const bool visible=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_MAGNET_VISIBLE"); return t && *t=='1'; }();
-    auto& memory=*sfr::active_memory;
-    const uint32_t racer=memory.load<uint32_t>(ctx.r3.u32+80);
-    if(!visible && chaos_magnet_racer(racer)) {
+    static const bool shown=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_SHIELD"); return t && *t=='1'; }();
+    const uint32_t racer=sfr::active_memory->load<uint32_t>(ctx.r3.u32+80);
+    if(!shown && chaos_mod_types() && chaos_super(racer)) {
         static int told=0;
-        if(told++<4) std::cerr << "MAGNET_EFFECT hidden racer=0x" << std::hex << racer << std::dec << '\n';
+        if(told++<4) std::cerr << "GAME_PATCH chaos_emerald_shield hidden racer=0x" << std::hex << racer << std::dec << '\n';
         return;
     }
     __imp__sub_822D4998(ctx,base);

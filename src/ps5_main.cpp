@@ -28,6 +28,8 @@
 #include <string>
 #include <system_error>
 #include <cerrno>
+#include <fcntl.h>
+#include <streambuf>
 
 int sfr_game_main(int argc, char** argv);
 // The boot tracer (ps5_boot_trace.c): /data/frr-ps5/boot-trace.txt.
@@ -118,6 +120,43 @@ bool ensure_installed() {
     klog("installed; the .iso can be deleted now");
     return true;
 }
+// game.log by write(2) on its own descriptor, a line at a time. Through the
+// C library's stderr the log stopped for good at the Vulkan driver's first
+// message (build 7: every later line lost, the start-up marks showing the game
+// ran on), so std::cerr no longer goes through a FILE.
+class FdLogBuf final : public std::streambuf {
+public:
+    explicit FdLogBuf(int fd) : fd_(fd) {}
+protected:
+    int_type overflow(int_type ch) override {
+        if (ch == traits_type::eof()) return traits_type::not_eof(ch);
+        line().push_back(char(ch));
+        if (ch == '\n') flush_line();
+        return ch;
+    }
+    std::streamsize xsputn(const char* text, std::streamsize count) override {
+        std::string& pending = line();
+        for (std::streamsize i = 0; i < count; ++i) {
+            pending.push_back(text[i]);
+            if (text[i] == '\n') flush_line();
+        }
+        return count;
+    }
+    int sync() override { flush_line(); return 0; }
+private:
+    static std::string& line() { thread_local std::string pending; return pending; }
+    void flush_line() {
+        std::string& pending = line();
+        size_t done = 0;
+        while (done < pending.size()) {
+            const ssize_t wrote = ::write(fd_, pending.data() + done, pending.size() - done);
+            if (wrote <= 0) break;
+            done += size_t(wrote);
+        }
+        pending.clear();
+    }
+    int fd_;
+};
 }  // namespace
 
 int main() {
@@ -126,8 +165,17 @@ int main() {
     const bool entered = chdir(root) == 0;
     const int chdir_error = entered ? 0 : errno;
     frr_boot_mark(entered ? "chdir /data/frr-ps5 ok" : "chdir /data/frr-ps5 refused (absolute paths only)");
-    if (!std::freopen(at("game.log").c_str(), "w", stderr)) klog("cannot write /data/frr-ps5/game.log");
-    std::setvbuf(stderr, nullptr, _IONBF, 0);  // unbuffered, so a crash keeps every line
+    const int log_fd = ::open(at("game.log").c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_APPEND, 0666);
+    if (log_fd < 0) {
+        klog("cannot write /data/frr-ps5/game.log");
+    } else {
+        static FdLogBuf log_buffer(log_fd);
+        std::cerr.rdbuf(&log_buffer);
+        std::clog.rdbuf(&log_buffer);
+        // C stderr (the Vulkan driver's messages) to the same file.
+        if (::dup2(log_fd, 2) < 0) frr_boot_mark("dup2 onto stderr refused");
+        std::setvbuf(stderr, nullptr, _IONBF, 0);
+    }
     // SDL's PS5 video driver opens VideoOut, which the renderer owns: if
     // anything starts SDL video it gets the dummy driver instead.
     setenv("SDL_VIDEODRIVER", "dummy", 1);

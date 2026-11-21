@@ -2040,6 +2040,41 @@ void chaos_mod_super_types(uint32_t ability) {
                                    << " phase=" << std::dec << phase << " mask=0x" << std::hex << mask << std::dec << '\n';
     }
 }
+// The racers riding the Chaos Emeralds: those 82296348 (that gear's racer
+// update) has run for.
+std::array<std::atomic<uint32_t>,8> chaos_racers{};
+void note_chaos_racer(uint32_t racer) {
+    for(auto& slot:chaos_racers) if(slot.load(std::memory_order_relaxed)==racer) return;
+    for(auto& slot:chaos_racers) { uint32_t empty=0; if(slot.compare_exchange_strong(empty,racer)) return; }
+    chaos_racers[racer%chaos_racers.size()].store(racer,std::memory_order_relaxed);
+}
+bool chaos_racer(uint32_t racer) {
+    for(auto& slot:chaos_racers) if(slot.load(std::memory_order_relaxed)==racer) return true;
+    return false;
+}
+
+// SFR_MOD_CHAOS_RING_CAP=N (101-999): a Chaos Emeralds racer holds up to N
+// rings. 82280570 (r3 the racer, r4 its new ring count) stores the count at
+// +2180 capped at 100, or 999 in the ring-gathering modes (mode 2 and 10 at
+// [[0x83E52F8C]+80]+12); the count asked for is put back over 100, up to N.
+PPC_FUNC_IMPL(__imp__sub_82280570);
+SFR_CONCURRENT_HOOK(sub_82280570) {
+    static const int32_t cap=[]{
+        const char* t=std::getenv("SFR_MOD_CHAOS_RING_CAP");
+        const auto set=[](const char* n){ const char* v=std::getenv(n); return v && *v; };
+        if(!t || !*t || set("SFR_LIVE_HOST") || set("SFR_LIVE_SERVER")) return 0;
+        const long n=std::strtol(t,nullptr,10);
+        return n>100 && n<1000 ? int32_t(n) : 0;
+    }();
+    const uint32_t racer=ctx.r3.u32;
+    const int32_t asked=int32_t(ctx.r4.u32);
+    __imp__sub_82280570(ctx,base);
+    if(!cap || asked<=100 || !chaos_racer(racer)) return;
+    auto& memory=*sfr::active_memory;
+    const int32_t now=int32_t(memory.load<uint32_t>(racer+2180));
+    if(now==100) memory.store<uint32_t>(racer+2180,uint32_t(std::min(asked,cap)));
+}
+
 // SFR_MOD_CHAOS_TRANSFORM_RINGS=N (31-999): Sonic turns into Super Sonic at
 // N rings, not 30. 82296348 (the Chaos Emeralds' racer update; r3 its state,
 // +52 0 while Sonic, r4 the racer, rings at +2180) compares the rings with an
@@ -2054,6 +2089,7 @@ SFR_CONCURRENT_HOOK(sub_82296348) {
         return n>30 && n<1000 ? int32_t(n) : 0;
     }();
     auto& memory=*sfr::active_memory;
+    note_chaos_racer(ctx.r4.u32);
     if(threshold && memory.load<uint32_t>(ctx.r3.u32+52)==0) {
         const uint32_t racer=ctx.r4.u32;
         const int32_t rings=int32_t(memory.load<uint32_t>(racer+2180));

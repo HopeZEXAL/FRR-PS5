@@ -2124,6 +2124,46 @@ SFR_CONCURRENT_HOOK(sub_82296348) {
     }
     __imp__sub_82296348(ctx,base);
 }
+// The Ring Eater's effect object (822D48D0 its update, 822D4998 its effect
+// placement; r3+80 the racer) acts only while the live gear has the magnet
+// bit (+172 0x8) and the racer's flags +2216 have 0x1000000. For a Chaos
+// Emeralds racer given the bit (SFR_MOD_CHAOS_SUPER_MAGNET), the update runs
+// with that flag on; the placement of the visible effect is skipped
+// (SFR_MOD_CHAOS_MAGNET_VISIBLE=1 keeps it). MAGNET_EFFECT lines: the first
+// calls for such a racer.
+static bool chaos_magnet_racer(uint32_t racer) {
+    static const bool magnet=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_MAGNET"); return t && *t=='1'; }();
+    if(!magnet || !racer || !chaos_racer(racer)) return false;
+    auto& memory=*sfr::active_memory;
+    const uint32_t gear=memory.load<uint32_t>(racer+3216);
+    return gear && (memory.load<uint32_t>(gear+172)&0x8);
+}
+PPC_FUNC_IMPL(__imp__sub_822D48D0);
+SFR_CONCURRENT_HOOK(sub_822D48D0) {
+    auto& memory=*sfr::active_memory;
+    const uint32_t racer=memory.load<uint32_t>(ctx.r3.u32+80);
+    if(!chaos_magnet_racer(racer)) { __imp__sub_822D48D0(ctx,base); return; }
+    const uint32_t flags=memory.load<uint32_t>(racer+2216);
+    static int told=0;
+    if(told++<12) std::cerr << "MAGNET_EFFECT update racer=0x" << std::hex << racer << " state=" << std::dec
+                             << memory.load<uint32_t>(ctx.r3.u32+20) << " flags=0x" << std::hex << flags << std::dec << '\n';
+    if(flags&0x1000000) { __imp__sub_822D48D0(ctx,base); return; }
+    memory.store<uint32_t>(racer+2216,flags|0x1000000);
+    __imp__sub_822D48D0(ctx,base);
+    memory.store<uint32_t>(racer+2216,memory.load<uint32_t>(racer+2216)&~0x1000000u);
+}
+PPC_FUNC_IMPL(__imp__sub_822D4998);
+SFR_CONCURRENT_HOOK(sub_822D4998) {
+    static const bool visible=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_MAGNET_VISIBLE"); return t && *t=='1'; }();
+    auto& memory=*sfr::active_memory;
+    const uint32_t racer=memory.load<uint32_t>(ctx.r3.u32+80);
+    if(!visible && chaos_magnet_racer(racer)) {
+        static int told=0;
+        if(told++<4) std::cerr << "MAGNET_EFFECT hidden racer=0x" << std::hex << racer << std::dec << '\n';
+        return;
+    }
+    __imp__sub_822D4998(ctx,base);
+}
 PPC_FUNC_IMPL(__imp__sub_82297B90);
 SFR_CONCURRENT_HOOK(sub_82297B90) { apply_chaos_emerald_mod(); __imp__sub_82297B90(ctx,base); }
 PPC_FUNC_IMPL(__imp__sub_8245B7B0);

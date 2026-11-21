@@ -1872,6 +1872,18 @@ void dump_texture_levels(const TextureFetch& fetch, const std::vector<TextureLev
 }
 }
 
+namespace {
+// TEXTURE_PROFILE (with the frame metrics): where texture() spends its time,
+// in sections, reported every 600 frames.
+struct TextureProfile {
+    enum { lookup, early, written, rearm, same, dynamic, upload, count };
+    double ms[count]{}; uint64_t calls[count]{};
+    std::chrono::steady_clock::time_point last;
+    uint64_t reported = 0;
+};
+TextureProfile texture_profile;
+}
+
 uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
     // Timed as a whole: the lookup, the content hash that decides whether the
     // guest changed it, and the upload when it did. Only for the frame
@@ -1885,6 +1897,26 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
                 std::chrono::steady_clock::now() - start).count();
         }
     } texture_timer{*impl_, timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{}};
+    TextureProfile& prof = texture_profile;
+    if (timed) prof.last = texture_timer.start;
+    const auto section = [&](int which) {
+        if (!timed) return;
+        const auto now = std::chrono::steady_clock::now();
+        prof.ms[which] += std::chrono::duration<double, std::milli>(now - prof.last).count();
+        ++prof.calls[which];
+        prof.last = now;
+    };
+    if (timed && impl_->frame >= prof.reported + 600) {
+        prof.reported = impl_->frame;
+        std::cerr << "TEXTURE_PROFILE frame=" << impl_->frame;
+        static const char* names[] = {"lookup", "early", "written", "rearm", "same", "dynamic", "upload"};
+        for (int i = 0; i < TextureProfile::count; ++i)
+            std::cerr << ' ' << names[i] << "_ms=" << prof.ms[i] << ' ' << names[i] << "_n=" << prof.calls[i];
+        std::cerr << " textures=" << impl_->texture_ranges.size() << '\n';
+        prof = TextureProfile{};
+        prof.reported = impl_->frame;
+        prof.last = std::chrono::steady_clock::now();
+    }
     const auto fetch = decode_texture_fetch(words);
     if (!fetch.base_address) return null_2d;
     // What the title resolved out of the framebuffer is served from the copy
@@ -1894,6 +1926,7 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
         if (sampled.insert(fetch.base_address).second)
             std::cerr << "NATIVE_RESOLVED_SAMPLED base=0x" << std::hex << fetch.base_address << std::dec
                       << " descriptor=" << resolved->second << '\n';
+        section(TextureProfile::lookup);
         return resolved->second;
     }
     // SFR_TEXTURE_SURVEY=N reports the first N distinct texture addresses a
@@ -1924,12 +1957,13 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
         // The CPU may rewrite a texture in place (movie frames) without a lock:
         // watched pages report it and the texture is uploaded again.
         auto& range = impl_->texture_ranges.at(found->second);
+        section(TextureProfile::lookup);
         // Checked once a frame, not once a draw: the scan below walks the
         // watched-page bits of the whole texture in each of three views, and a
         // race frame binds the same textures across hundreds of draws
         // (docs/performance.md). A rewrite lands one frame later, which is how
         // the content check beside it already behaves.
-        if (range.seen_frame == impl_->frame) return found->second;
+        if (range.seen_frame == impl_->frame) { section(TextureProfile::early); return found->second; }
         range.seen_frame = impl_->frame;
         // Writes since this texture's own last look (write epochs): textures
         // share pages, and a shared written bit taken by one would hide the
@@ -1943,6 +1977,7 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
             views(uint32_t(range.mip_begin), range.mip_end - range.mip_begin, [&](uint64_t view) {
                 written |= memory.written_since(view, range.mip_end - range.mip_begin, range.epoch);
             });
+        section(TextureProfile::written);
         if (written) {
             range.epoch = now;
             // Protected again where page protection records the writes.
@@ -1957,6 +1992,7 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
         // frame), and decoding and uploading it again costs milliseconds on
         // devices without BC. Unchanged bytes keep the texture (the hash
         // covers the mips when they follow the base, the usual layout).
+        if (written) section(TextureProfile::rearm);
         static const bool same_check = [] { const char* t = std::getenv("SFR_TEXTURE_SAME_CHECK"); return !t || *t != '0'; }();
         if (written && same_check && range.mip_end == range.mip_begin) {
             const uint64_t size = range.end - range.begin;
@@ -1965,6 +2001,7 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
                 written = false;
                 ++impl_->texture_rewrites_same;
             }
+            section(TextureProfile::same);
         }
         if (!written && range.dynamic && range.checked_frame != impl_->frame) {
             range.checked_frame = impl_->frame;
@@ -1996,11 +2033,16 @@ uint32_t NativeRenderer::texture(GuestMemory& memory, const FetchWords& words) {
                 std::cerr << "TEXTURE_DYNAMIC frame=" << impl_->frame << " checks=" << checks
                           << " checked_mb=" << checked_bytes / (1024 * 1024) << " demoted=" << demoted << '\n';
             }
+            section(TextureProfile::dynamic);
         }
         static const bool no_cache = std::getenv("SFR_TEXTURE_NO_CACHE") != nullptr;
         if (!written && !(fetch.format == 2 && no_cache)) return found->second;
         invalidate(uint32_t(range.begin), uint32_t(range.end - range.begin));
     }
+    struct UploadSection {
+        const decltype(section)& end;
+        ~UploadSection() { end(TextureProfile::upload); }
+    } upload_section{section};
     auto layout = linear_texture_layout(fetch);
     if (!layout && depth_texture_placeholder) {
         // Investigation mode: a format without a native layout is served as a

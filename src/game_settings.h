@@ -32,6 +32,7 @@ enum Id {
     no_flight,         // SFR_SUPER_SONIC_STAY_ON_BOARD: the kick dash starts no flight
     drain_riding,      // SFR_MOD_CHAOS_DRAIN_RIDING: ms a ring while Super Sonic rides (0 = none, the game's)
     drain_flight,      // SFR_MOD_CHAOS_DRAIN_FLIGHT: ms a ring while he flies ("game" = the game's third of a second)
+    hit_loss,          // SFR_MOD_CHAOS_HIT_LOSS: rings Super Sonic loses to a hit ("game" = the game's)
     // Controls
     touchpad_pointer,  // SFR_TOUCHPAD_POINTER
     button_prompts,    // SFR_BUTTON_PROMPTS
@@ -39,6 +40,7 @@ enum Id {
     notifications,     // SFR_ACHIEVEMENT_NOTIFICATIONS
     performance_log,   // SFR_FRAME_METRICS and SFR_GPU_TIMING
     stall_watchdog,    // SFR_STALL_WATCHDOG
+    menu_hint,         // SFR_MENU_HINT: "L3 + R3" shown on the title screen
     count
 };
 

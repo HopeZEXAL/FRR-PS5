@@ -298,6 +298,7 @@ std::array<float, 6> pointer_view{};
 }
 
 void set_touch_title(bool waiting) { title_now.store(waiting, std::memory_order_relaxed); }
+bool touch_title_waiting() { return title_now.load(std::memory_order_relaxed); }
 
 namespace {
 std::atomic<int64_t> movie_ms{-1000000};

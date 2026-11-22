@@ -2105,6 +2105,19 @@ SFR_CONCURRENT_HOOK(sub_82280570) {
 PPC_FUNC_IMPL(__imp__sub_82280828);
 SFR_CONCURRENT_HOOK(sub_82280828) {
     const bool quiet=sfr::game_settings::value(sfr::game_settings::chaos_quiet_drain)!=0;
+    // Rings Super Sonic loses otherwise than to his drain (a hit, an attack:
+    // a negative change from any other caller), as the settings page says.
+    if(int32_t(ctx.r4.u32)<0 && uint32_t(ctx.lr)!=0x822963E8u && chaos_super(ctx.r3.u32)) {
+        const char* loss=sfr::game_settings::text(sfr::game_settings::hit_loss);
+        if(std::strcmp(loss,"game")!=0) {
+            const int32_t asked=-int32_t(ctx.r4.u32), allowed=int32_t(std::strtol(loss,nullptr,10));
+            static int told=0;
+            if(told++<12) std::cerr << "GAME_PATCH chaos_hit_loss racer=0x" << std::hex << ctx.r3.u32 << " lr=0x"
+                                    << uint32_t(ctx.lr) << std::dec << " asked=" << asked << " allowed=" << allowed << '\n';
+            if(allowed==0) return;
+            ctx.r4.s64=-int64_t(std::min(asked,allowed));
+        }
+    }
     if(quiet && uint32_t(ctx.lr)==0x822963E8u) {
         auto& memory=*sfr::active_memory;
         const uint32_t clock=memory.load<uint32_t>(0x83E516A0u);

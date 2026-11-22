@@ -192,6 +192,8 @@ std::optional<std::array<float, 2>> pointer_from_window(float x, float y);
 // Whether the title screen waits for START (the Kinect hooks know); with
 // touch_racing, the scene the touches are read for.
 void set_touch_title(bool waiting);
+// Whether the title screen waits for START now.
+bool touch_title_waiting();
 // A movie frame was asked for (the movie player's hook, each frame it plays).
 void note_touch_movie();
 // Whether a story scene is on (the Kinect hooks know: no menu page, dialog

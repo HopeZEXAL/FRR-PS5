@@ -3,6 +3,7 @@
 #include "game_settings.h"
 #include "overlay_canvas.h"
 #include "screen_overlay.h"
+#include "touch_controls.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -120,6 +121,12 @@ struct AchievementOverlay::Impl {
     int tab = 0;
     int setting = 0;  // the selected one, in the order of settings_order()
     std::map<std::string, int> section_first;  // each section's first row shown
+    // The title screen's note that L3 + R3 opens this page (the settings'
+    // menu hint): shown while it waits for START and a few seconds after.
+    bool hint_shown = false;
+    double hint_until = 0;
+    std::shared_ptr<const OverlayImage> hint_image;
+    float hint_scale = 0;
     std::vector<size_t> order;
     std::vector<AchievementProgress> progress;
     double progress_read_at = -1;
@@ -508,6 +515,25 @@ struct AchievementOverlay::Impl {
         return image_from(canvas);
     }
 
+    std::shared_ptr<const OverlayImage> compose_hint(float s) {
+        ensure_fonts();
+        const char* text = "Recompiled menu: settings and achievements";
+        const float tw = fonts.measure(text, 19 * s, OverlayFonts::regular) / s;
+        const float w = 30 + 92 + 12 + tw + 24, h = 46;
+        OverlayCanvas canvas(uint32_t(std::ceil(w * s)), uint32_t(std::ceil(h * s)));
+        canvas.fill_round_rect(0, 0, w * s, h * s, h * s / 2, overlay_rgb(0x0E4AAE, 0.92f), overlay_rgb(0x061E5C, 0.92f));
+        canvas.stroke_round_rect(0, 0, w * s, h * s, h * s / 2, 2 * s, panel_edge);
+        float x = 18;
+        for (const char* stick : {"L3", "R3"}) {
+            canvas.fill_round_rect(x * s, 11 * s, 36 * s, 24 * s, 8 * s, overlay_rgb(0x0A1F4D));
+            const float sw = fonts.measure(stick, 14 * s, OverlayFonts::bold);
+            canvas.text(fonts, stick, (x + 18) * s - sw / 2, 28 * s, 14 * s, sonic_yellow, OverlayFonts::bold);
+            x += 46;
+        }
+        canvas.text(fonts, text, (x + 4) * s, 30 * s, 19 * s, text_white);
+        return image_from(canvas);
+    }
+
     std::vector<ScreenLayer> layers(float vw, float vh) {
         std::vector<ScreenLayer> out;
         if (vw <= 0 || vh <= 0 || !title) return out;
@@ -535,6 +561,14 @@ struct AchievementOverlay::Impl {
             }
             const float w = 1040 * u, h = 620 * u;
             out.push_back({page_image, (vw - w) / 2, (vh - h) / 2, w, h, 1.0f});
+        }
+        if (hint_shown && !open) {
+            if (!hint_image || hint_scale != scale) {
+                hint_image = compose_hint(scale);
+                hint_scale = scale;
+            }
+            const float w = float(hint_image->width) / scale * u, h = float(hint_image->height) / scale * u;
+            out.push_back({hint_image, 40 * u, vh - h - 40 * u, w, h, 1.0f});
         }
         if (toast_frame) {
             const TitleAchievement* a = achievement(toast_frame->id);
@@ -778,7 +812,9 @@ void AchievementOverlay::poll(double now, uint64_t present) {
     m.previous_buttons = buttons;
     m.previous_keys = keys;
     m.toast_frame = m.notifications ? m.toasts.at(now) : std::nullopt;
-    set_screen_layers_shown(m.open || m.toast_frame.has_value());
+    if (game_settings::value(game_settings::menu_hint) && touch_title_waiting()) m.hint_until = now + 6.0;
+    m.hint_shown = game_settings::value(game_settings::menu_hint) && now < m.hint_until;
+    set_screen_layers_shown(m.open || m.toast_frame.has_value() || m.hint_shown);
 }
 
 void AchievementOverlay::touches(std::span<const Touch> touches, double now) {
@@ -828,6 +864,6 @@ void AchievementOverlay::touches(std::span<const Touch> touches, double now) {
         m.scroll_anchor = 0;
     }
     m.fingers = std::move(current);
-    set_screen_layers_shown(m.open || m.toast_frame.has_value());
+    set_screen_layers_shown(m.open || m.toast_frame.has_value() || m.hint_shown);
 }
 }

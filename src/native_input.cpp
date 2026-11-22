@@ -1,3 +1,4 @@
+#include "game_settings.h"
 #include "native_input.h"
 #include "input_bindings.h"
 #include "control_prompts.h"
@@ -547,8 +548,7 @@ NativeInput NativeInput::sdl(std::function<void*()> focus_window, std::function<
         // the pad stands for the screen, a finger's spot is the cursor's, as
         // a finger on a phone or the mouse is elsewhere (touch_controls.h).
         // The right stick still moves it too. SFR_TOUCHPAD_POINTER=0: off.
-        static const bool touch_pointer = [] {
-            const char* t = std::getenv("SFR_TOUCHPAD_POINTER"); return !t || *t != '0'; }();
+        const bool touch_pointer = game_settings::value(game_settings::touchpad_pointer) != 0;
         if (user == 0 && touch_pointer && SDL_GameControllerGetNumTouchpads(controller) > 0) {
             static bool touching = false;
             Uint8 down = 0;

@@ -1,3 +1,4 @@
+#include "game_settings.h"
 #include "fps_readout.h"
 #include <algorithm>
 #include <cmath>
@@ -20,11 +21,8 @@ void FpsCounter::presented(double seconds) {
 }
 
 bool fps_overlay_enabled() {
-    static const bool enabled = [] {
-        const char* text = std::getenv("SFR_FPS_OVERLAY");
-        return text && *text == '1';
-    }();
-    return enabled;
+    // The settings page's frame counter (game_settings.h; SFR_FPS_OVERLAY).
+    return game_settings::value(game_settings::frame_counter) != 0;
 }
 
 uint32_t fps_overlay_inset() {

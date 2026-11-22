@@ -1,3 +1,4 @@
+#include "game_settings.h"
 #include "ppc_recomp_shared.h"
 #include "diagnostic_hooks.h"
 #include "avatar_state.h"
@@ -575,6 +576,12 @@ static bool skip_draws() {
 // of each frame for the next one, so a frame is drawn or skipped whole.
 static std::atomic<bool> draw_this_race_frame{true};
 static bool rendering_this_frame() {
+    // The settings page's race frame rate of 30 (game_settings.h): a race
+    // drawn every other frame, stepped every frame.
+    if(sfr::game_settings::value(sfr::game_settings::frame_limit)==30) {
+        constexpr uint32_t race_flag=0x83E52F8C;
+        if(sfr::active_memory->load<uint32_t>(race_flag) && sfr::present_count%2!=0) return false;
+    }
     if(sfr::race_frameskip_enabled()) {
         constexpr uint32_t race_flag=0x83E52F8C;
         if(sfr::active_memory->load<uint32_t>(race_flag)) return draw_this_race_frame.load(std::memory_order_relaxed);

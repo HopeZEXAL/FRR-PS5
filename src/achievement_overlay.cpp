@@ -1,6 +1,6 @@
 #include "achievement_overlay.h"
 #include "image_decode.h"
-#include "mod_settings.h"
+#include "game_settings.h"
 #include "overlay_canvas.h"
 #include "screen_overlay.h"
 #include <algorithm>
@@ -16,6 +16,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <thread>
 
 namespace sfr {
 void AchievementPageNav::move(int by) {
@@ -73,7 +74,7 @@ const AchievementTexts& achievement_texts(uint32_t xbox_language) {
 namespace {
 constexpr uint16_t pad_up = 0x0001, pad_down = 0x0002, pad_left = 0x0004, pad_right = 0x0008;
 constexpr uint16_t pad_back = 0x0020, pad_l3 = 0x0040, pad_r3 = 0x0080, pad_lb = 0x0100, pad_rb = 0x0200;
-constexpr uint16_t pad_a = 0x1000, pad_b = 0x2000;
+constexpr uint16_t pad_a = 0x1000, pad_b = 0x2000, pad_y = 0x8000;
 constexpr int key_f1 = 0x70, key_escape = 0x1B, key_backspace = 0x08, key_up = 0x26, key_down = 0x28, key_page_up = 0x21,
               key_page_down = 0x22, key_home = 0x24, key_end = 0x23;
 
@@ -115,9 +116,9 @@ struct AchievementOverlay::Impl {
 
     bool open = false, closing = false;
     AchievementPageNav nav;
-    // The tabs: 0 the achievements, 1 the port's mods (mod_settings.h).
+    // The tabs: 0 the achievements, 1 the port's settings (game_settings.h).
     int tab = 0;
-    AchievementPageNav mods_nav;
+    int setting = 0;  // the selected one, in the order of settings_order()
     std::vector<size_t> order;
     std::vector<AchievementProgress> progress;
     double progress_read_at = -1;
@@ -197,7 +198,6 @@ struct AchievementOverlay::Impl {
             order = achievement_page_order(*title, unlocked);
             nav = {};
             nav.count = int(order.size());
-            mods_nav.count = int(mods::settings().size());
             refresh_progress(now);
             if (host.page_shown) host.page_shown(true);
             std::cerr << "ACHIEVEMENT_PAGE open count=" << order.size() << " unlocked=" << unlocked.list.size()
@@ -248,63 +248,89 @@ struct AchievementOverlay::Impl {
         canvas.text(fonts, letter, x + r - lw / 2, baseline - 2.5f * s, 15 * s, color, OverlayFonts::bold);
     }
 
-    // The Mods tab: a row per setting, its name and what it does on the
-    // left, its value between arrows on the right.
-    void compose_mods(OverlayCanvas& canvas, float s, float W, float H, float rows_top, float row_h, float row_gap) {
-        const auto& all = mods::settings();
-        mods_nav.count = int(all.size());
-        if (mods::online()) {
-            const char* note = "Online: the mods are off";
-            const float nw = fonts.measure(note, 22 * s, OverlayFonts::bold);
-            canvas.text(fonts, note, (W - 36) * s - nw, 58 * s, 22 * s, sonic_yellow, OverlayFonts::bold);
+    // The settings in the page's order: section by section.
+    static const std::vector<game_settings::Id>& settings_order() {
+        static const std::vector<game_settings::Id> order = [] {
+            std::vector<game_settings::Id> out;
+            for (const char* section : game_settings::sections())
+                for (const auto id : game_settings::in_section(section)) out.push_back(id);
+            return out;
+        }();
+        return order;
+    }
+
+    // The Settings tab: the sections down the left, the selected one's
+    // settings on the right (name, what it does, when it applies, its value
+    // between arrows).
+    void compose_settings(OverlayCanvas& canvas, float s, float W, float H) {
+        namespace gs = game_settings;
+        const auto& order = settings_order();
+        const gs::Id chosen_id = order[size_t(std::clamp(setting, 0, int(order.size()) - 1))];
+        const gs::Setting& chosen = gs::settings()[size_t(chosen_id)];
+        if (gs::restart_pending()) {
+            const char* note = "Restart to apply:  Y closes the game";
+            const float nw = fonts.measure(note, 20 * s, OverlayFonts::bold);
+            canvas.text(fonts, note, (W - 36) * s - nw, 56 * s, 20 * s, sonic_yellow, OverlayFonts::bold);
         }
-        for (int k = 0; k < mods_nav.visible; ++k) {
-            const int index = mods_nav.first + k;
-            if (index >= mods_nav.count) break;
-            const mods::Setting& setting = all[size_t(index)];
-            const bool picked = index == mods_nav.selected;
-            const float y = rows_top + float(k) * (row_h + row_gap), x = 22, w = W - 44 - 18;
+        // Sections.
+        const float top = 96, left_w = 230;
+        float y = top;
+        for (const char* section : gs::sections()) {
+            const bool here = std::strcmp(section, chosen.section) == 0;
+            if (here) canvas.fill_round_rect(22 * s, y * s, left_w * s, 52 * s, 12 * s, row_picked_top, row_picked_bottom);
+            else canvas.fill_round_rect(22 * s, y * s, left_w * s, 52 * s, 12 * s, row_fill);
+            if (here) canvas.fill_round_rect(30 * s, (y + 12) * s, 6 * s, 28 * s, 3 * s, sonic_yellow);
+            canvas.text(fonts, section, 48 * s, (y + 34) * s, 22 * s, here ? text_white : text_soft, OverlayFonts::bold,
+                        (left_w - 34) * s);
+            y += 60;
+        }
+        // The section's settings.
+        const float x = 22 + left_w + 14, w = W - x - 22, row_h = 70, gap = 6;
+        y = top;
+        for (const auto id : gs::in_section(chosen.section)) {
+            const gs::Setting& item = gs::settings()[size_t(id)];
+            const bool picked = id == chosen_id;
             if (picked) {
-                canvas.fill_round_rect(x * s, y * s, w * s, row_h * s, 14 * s, row_picked_top, row_picked_bottom);
-                canvas.stroke_round_rect(x * s, y * s, w * s, row_h * s, 14 * s, 3 * s, sonic_yellow);
+                canvas.fill_round_rect(x * s, y * s, w * s, row_h * s, 12 * s, row_picked_top, row_picked_bottom);
+                canvas.stroke_round_rect(x * s, y * s, w * s, row_h * s, 12 * s, 3 * s, sonic_yellow);
             } else {
-                canvas.fill_round_rect(x * s, y * s, w * s, row_h * s, 14 * s, row_fill);
+                canvas.fill_round_rect(x * s, y * s, w * s, row_h * s, 12 * s, row_fill);
             }
-            const int chosen = mods::index(mods::Id(index));
-            const char* label = setting.labels[size_t(chosen)];
-            const float right = x + w - 24;
-            const float lw = fonts.measure(label, 26 * s, OverlayFonts::bold);
-            const float aw = fonts.measure("<", 26 * s, OverlayFonts::bold);
-            const float value_left = right - 180;
-            const float centre = (value_left + right) / 2;
-            const OverlayColor arrows = picked ? sonic_yellow : text_dim;
-            canvas.text(fonts, "<", value_left * s, (y + 54) * s, 26 * s, arrows, OverlayFonts::bold);
-            canvas.text(fonts, ">", right * s - aw, (y + 54) * s, 26 * s, arrows, OverlayFonts::bold);
-            canvas.text(fonts, label, centre * s - lw / 2, (y + 54) * s, 26 * s, chosen ? sonic_yellow : text_white,
-                        OverlayFonts::bold);
-            const float tx = x + 22;
-            canvas.text(fonts, setting.name, tx * s, (y + 36) * s, 24 * s, picked ? text_white : text_soft, OverlayFonts::bold,
-                        (value_left - 20 - tx) * s);
-            const auto lines = wrap_overlay_text(fonts, setting.description, 17 * s, OverlayFonts::regular,
-                                                 (value_left - 20 - tx) * s, 2);
+            const bool locked = item.offline_only && gs::online();
+            const int at = gs::index(id);
+            const char* label = locked ? "Off online" : item.labels[size_t(at)];
+            const float right = x + w - 20, value_left = right - 170, centre = (value_left + right) / 2;
+            const float lw = fonts.measure(label, 22 * s, OverlayFonts::bold), aw = fonts.measure(">", 22 * s, OverlayFonts::bold);
+            const OverlayColor arrows = picked && !locked ? sonic_yellow : text_dim;
+            canvas.text(fonts, "<", value_left * s, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
+            canvas.text(fonts, ">", right * s - aw, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
+            canvas.text(fonts, label, centre * s - lw / 2, (y + 32) * s, 22 * s,
+                        locked ? text_dim : at != item.fallback ? sonic_yellow : text_white, OverlayFonts::bold);
+            const char* when = item.applies == gs::Applies::restart     ? "Restart"
+                               : item.applies == gs::Applies::next_race ? "Next race"
+                               : item.applies == gs::Applies::menus     ? "In menus"
+                                                                        : "";
+            if (*when) {
+                const float ww = fonts.measure(when, 14 * s, OverlayFonts::regular);
+                canvas.text(fonts, when, centre * s - ww / 2, (y + 56) * s, 14 * s, text_dim);
+            }
+            const float tx = x + 18, room = value_left - 16 - tx;
+            canvas.text(fonts, item.name, tx * s, (y + 28) * s, 21 * s, picked ? text_white : text_soft, OverlayFonts::bold,
+                        room * s);
+            const auto lines = wrap_overlay_text(fonts, item.description, 15 * s, OverlayFonts::regular, room * s, 2);
             for (size_t l = 0; l < lines.size(); ++l)
-                canvas.text(fonts, lines[l], tx * s, (y + 60 + 20 * float(l)) * s, 17 * s, picked ? text_soft : text_dim);
+                canvas.text(fonts, lines[l], tx * s, (y + 49 + 17 * float(l)) * s, 15 * s, picked ? text_soft : text_dim);
+            y += row_h + gap;
         }
-        if (mods_nav.count > mods_nav.visible) {
-            const float track_y = rows_top, track_h = mods_nav.visible * (row_h + row_gap) - row_gap, bx = W - 30;
-            canvas.fill_round_rect(bx * s, track_y * s, 8 * s, track_h * s, 4 * s, overlay_rgb(0x02103A, 0.8f));
-            const float thumb_h = (std::max)(30.0f, track_h * float(mods_nav.visible) / float(mods_nav.count));
-            const float thumb_y = track_y + (track_h - thumb_h) * float(mods_nav.first) / float(mods_nav.count - mods_nav.visible);
-            canvas.fill_round_rect(bx * s, thumb_y * s, 8 * s, thumb_h * s, 4 * s, panel_edge);
-        }
+        // What the buttons do.
         const float fy = H - 18;
         float fx = 34;
         button_glyph(canvas, fx * s, fy * s, s, "B", overlay_rgb(0xF04040));
         fx += 34;
-        fx += canvas.text(fonts, achievement_texts(language).close, fx * s, fy * s, 19 * s, text_white) / s + 28;
+        fx += canvas.text(fonts, achievement_texts(language).close, fx * s, fy * s, 19 * s, text_white) / s + 24;
         button_glyph(canvas, fx * s, fy * s, s, "A", overlay_rgb(0x60D040));
         fx += 34;
-        fx += canvas.text(fonts, "Change  (or left / right)", fx * s, fy * s, 19 * s, text_white) / s + 28;
+        fx += canvas.text(fonts, "Change (or left / right)", fx * s, fy * s, 19 * s, text_white) / s + 24;
         for (const char* shoulder : {"LB", "RB"}) {
             canvas.fill_round_rect(fx * s, (fy - 20) * s, 36 * s, 24 * s, 8 * s, overlay_rgb(0x0A1F4D));
             const float sw = fonts.measure(shoulder, 14 * s, OverlayFonts::bold);
@@ -332,7 +358,7 @@ struct AchievementOverlay::Impl {
         // The tabs, the one shown in white with a yellow bar under it.
         {
             float tx = 50;
-            const char* names[2] = {t.title, "Mods"};
+            const char* names[2] = {t.title, "Settings"};
             for (int k = 0; k < 2; ++k) {
                 const float tw = canvas.text(fonts, names[k], tx * s, 60 * s, 30 * s, k == tab ? text_white : text_dim,
                                              OverlayFonts::bold, 300 * s) / s;
@@ -341,7 +367,7 @@ struct AchievementOverlay::Impl {
             }
         }
         if (tab == 1) {
-            compose_mods(canvas, s, W, H, rows_top, row_h, row_gap);
+            compose_settings(canvas, s, W, H);
             return image_from(canvas);
         }
         int got = 0, score = 0, total = 0;
@@ -478,7 +504,7 @@ struct AchievementOverlay::Impl {
             out.push_back({dim_image, 0, 0, vw, vh, 1.0f});
             std::ostringstream key;
             key << scale << ':' << tab << ':' << nav.first << ':' << nav.selected << ':' << unlocked.list.size() << ':'
-                << mods_nav.first << ':' << mods_nav.selected << ':' << mods::generation() << ':';
+                << setting << ':' << game_settings::generation() << ':';
             for (const auto& p : progress) key << p.value << ',';
             if (!page_image || key.str() != page_key) {
                 page_key = key.str();
@@ -674,12 +700,28 @@ void AchievementOverlay::poll(double now, uint64_t present) {
         // LB / RB switch the tabs; on the Mods tab A and right step the
         // setting forward, left back.
         if (pressed(pad_lb) || pressed(pad_rb)) m.tab ^= 1;
-        AchievementPageNav& list = m.tab == 1 ? m.mods_nav : m.nav;
+        // The settings: one list, section after section (up and down cross
+        // from one into the next).
+        AchievementPageNav settings_list;
+        settings_list.count = int(Impl::settings_order().size());
+        settings_list.visible = settings_list.count;
+        settings_list.selected = m.setting;
+        AchievementPageNav& list = m.tab == 1 ? settings_list : m.nav;
         if (m.tab == 1) {
-            const int row = m.mods_nav.selected;
-            if (row >= 0 && row < m.mods_nav.count && !mods::online()) {
-                if (pressed(pad_a) || pressed(pad_right)) mods::step(mods::Id(row), 1);
-                if (pressed(pad_left)) mods::step(mods::Id(row), -1);
+            const auto id = Impl::settings_order()[size_t(std::clamp(m.setting, 0, settings_list.count - 1))];
+            const auto& item = game_settings::settings()[size_t(id)];
+            if (!(item.offline_only && game_settings::online())) {
+                if (pressed(pad_a) || pressed(pad_right)) game_settings::step(id, 1);
+                if (pressed(pad_left)) game_settings::step(id, -1);
+            }
+            // Y with a restart waiting: the settings are written and the game
+            // closes, to be started again.
+            if (pressed(pad_y) && game_settings::restart_pending()) {
+                std::cerr << "GAME_SETTINGS closing the game to apply\n";
+                game_settings::save_now();
+                std::cerr.flush();
+                std::this_thread::sleep_for(std::chrono::milliseconds(300));  // the log's writer
+                std::_Exit(0);
             }
         }
         // Up and down repeat while held: after 0.4 s, ten a second.
@@ -700,6 +742,7 @@ void AchievementOverlay::poll(double now, uint64_t present) {
         }
         if (pressed_key(key_home)) list.move(-list.count);
         if (pressed_key(key_end)) list.move(list.count);
+        if (m.tab == 1) m.setting = settings_list.selected;
         if (now - m.progress_read_at > 1.0) m.refresh_progress(now);
     }
     if (m.closing) {

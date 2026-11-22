@@ -11,7 +11,7 @@
 #include "job_lifetime.h"
 #include "stream_reader_gate.h"
 #include "touch_controls.h"
-#include "mod_settings.h"
+#include "game_settings.h"
 #include "super_sonic_board.h"
 #include "cpu_difficulty.h"
 #include <mutex>
@@ -1814,7 +1814,7 @@ sfr::cpu_difficulty::Level cpu_difficulty_level() {
         // Online every player has to race the same computers, so it stays Normal there.
         if(switch_set(std::getenv("SFR_LIVE_HOST")) || switch_set(std::getenv("SFR_LIVE_SERVER")))
             return sfr::cpu_difficulty::Level::normal;
-        const auto level=sfr::cpu_difficulty::from_environment(std::getenv("SFR_CPU_DIFFICULTY"));
+        const auto level=sfr::cpu_difficulty::from_environment(sfr::game_settings::text(sfr::game_settings::cpu_difficulty));
         std::cerr << "GAME_PATCH cpu_difficulty=" << sfr::cpu_difficulty::name(level) << '\n';
         return level;
     }();
@@ -1996,7 +1996,7 @@ void apply_chaos_emerald_mod() {
     static bool kept=false;
     static uint32_t old_parts=0, old_slots=0, old_types=0, applied=~0u;
     if(!sfr::active_memory) return;
-    const uint32_t generation=sfr::mods::generation();
+    const uint32_t generation=sfr::game_settings::generation();
     if(generation==applied) return;
     std::lock_guard guard(lock);
     if(generation==applied) return;
@@ -2007,8 +2007,8 @@ void apply_chaos_emerald_mod() {
         kept=true;
     }
     const auto env=[](const char* name){ const char* t=std::getenv(name); return t?std::string_view(t):std::string_view(); };
-    const bool types=sfr::mods::value(sfr::mods::chaos_types)!=0;
-    const int slots=sfr::mods::value(sfr::mods::chaos_slots);
+    const bool types=sfr::game_settings::value(sfr::game_settings::chaos_types)!=0;
+    const int slots=sfr::game_settings::value(sfr::game_settings::chaos_slots);
     memory.store<uint32_t>(entry+112,types?sfr::super_sonic::type_speed:old_types);
     uint32_t exclude=0xE;  // part ids 1-3: grind, air ride, power (power is 3: build 39)
     if(const auto text=env("SFR_MOD_CHAOS_EXCLUDE_PARTS"); !text.empty())
@@ -2027,7 +2027,7 @@ void apply_chaos_emerald_mod() {
               << memory.load<uint32_t>(entry+12) << std::dec << '\n';
 }
 }
-bool chaos_mod_types() { return sfr::mods::value(sfr::mods::chaos_types)!=0; }
+bool chaos_mod_types() { return sfr::game_settings::value(sfr::game_settings::chaos_types)!=0; }
 bool chaos_mod_super() { return chaos_mod_types(); }
 // After an update that left Super Sonic transformed (phase 3 on), his live
 // gear gets all three types; the return to Sonic rebuilds it from the table
@@ -2083,7 +2083,7 @@ bool chaos_super(uint32_t racer) {
 // [[0x83E52F8C]+80]+12); the count asked for is put back over 100, up to N.
 PPC_FUNC_IMPL(__imp__sub_82280570);
 SFR_CONCURRENT_HOOK(sub_82280570) {
-    const int32_t cap=sfr::mods::value(sfr::mods::chaos_ring_cap)>100?sfr::mods::value(sfr::mods::chaos_ring_cap):0;
+    const int32_t cap=sfr::game_settings::value(sfr::game_settings::chaos_ring_cap)>100?sfr::game_settings::value(sfr::game_settings::chaos_ring_cap):0;
     const uint32_t racer=ctx.r3.u32;
     const int32_t asked=int32_t(ctx.r4.u32);
     __imp__sub_82280570(ctx,base);
@@ -2100,7 +2100,7 @@ SFR_CONCURRENT_HOOK(sub_82280570) {
 // (0x82B09FB0); the drain's call runs with that time set to now.
 PPC_FUNC_IMPL(__imp__sub_82280828);
 SFR_CONCURRENT_HOOK(sub_82280828) {
-    const bool quiet=sfr::mods::value(sfr::mods::chaos_quiet_drain)!=0;
+    const bool quiet=sfr::game_settings::value(sfr::game_settings::chaos_quiet_drain)!=0;
     if(quiet && uint32_t(ctx.lr)==0x822963E8u) {
         auto& memory=*sfr::active_memory;
         const uint32_t clock=memory.load<uint32_t>(0x83E516A0u);
@@ -2117,7 +2117,7 @@ SFR_CONCURRENT_HOOK(sub_82280828) {
 // adds or takes in the meantime are kept.
 PPC_FUNC_IMPL(__imp__sub_82296348);
 SFR_CONCURRENT_HOOK(sub_82296348) {
-    const int32_t threshold=sfr::mods::value(sfr::mods::chaos_transform)>30?sfr::mods::value(sfr::mods::chaos_transform):0;
+    const int32_t threshold=sfr::game_settings::value(sfr::game_settings::chaos_transform)>30?sfr::game_settings::value(sfr::game_settings::chaos_transform):0;
     auto& memory=*sfr::active_memory;
     note_chaos_racer(ctx.r4.u32);
     note_chaos_state(ctx.r4.u32,memory.load<uint32_t>(ctx.r3.u32+52));
@@ -2142,7 +2142,7 @@ PPC_FUNC_IMPL(__imp__sub_822D4998);
 SFR_CONCURRENT_HOOK(sub_822D4998) {
 
     const uint32_t racer=sfr::active_memory->load<uint32_t>(ctx.r3.u32+80);
-    if(sfr::mods::value(sfr::mods::chaos_hide_shield)!=0 && chaos_super(racer)) {
+    if(sfr::game_settings::value(sfr::game_settings::chaos_hide_shield)!=0 && chaos_super(racer)) {
         static int told=0;
         if(told++<4) std::cerr << "GAME_PATCH chaos_emerald_shield hidden racer=0x" << std::hex << racer << std::dec << '\n';
         return;

@@ -1733,13 +1733,17 @@ bool local_player_racer(uint32_t racer) {
     return false;
 }
 
-const sfr::super_sonic::Options& super_sonic_options() {
-    static const sfr::super_sonic::Options options=[]{
+// The flight is the settings page's "Kick dash flight" (game_settings.h,
+// SFR_SUPER_SONIC_STAY_ON_BOARD); the rest is read once.
+sfr::super_sonic::Options super_sonic_options() {
+    static const sfr::super_sonic::Options fixed=[]{
         const auto on=[](const char* name){ const char* t=std::getenv(name); return t && *t=='1'; };
         using sfr::super_sonic::switch_set;
-        return sfr::super_sonic::Options{on("SFR_SUPER_SONIC_STAY_ON_BOARD"),on("SFR_SUPER_SONIC_ALL_TYPES"),
+        return sfr::super_sonic::Options{false,on("SFR_SUPER_SONIC_ALL_TYPES"),
             !sfr::super_sonic::options_apply(switch_set(std::getenv("SFR_LIVE_HOST")),switch_set(std::getenv("SFR_LIVE_SERVER")))};
     }();
+    sfr::super_sonic::Options options=fixed;
+    options.stay_on_board=sfr::game_settings::value(sfr::game_settings::no_flight)!=0;
     return options;
 }
 }

@@ -29,6 +29,7 @@ enum Id {
     chaos_slots,       // SFR_MOD_CHAOS_SLOTS: gear-part slots (0 = the game's)
     chaos_hide_shield, // SFR_MOD_CHAOS_HIDE_SHIELD: Ring Eater's shield hidden while Super
     chaos_quiet_drain, // SFR_MOD_CHAOS_QUIET_DRAIN: no ring sound for Super Sonic's drain
+    no_flight,         // SFR_SUPER_SONIC_STAY_ON_BOARD: the kick dash starts no flight
     // Controls
     touchpad_pointer,  // SFR_TOUCHPAD_POINTER
     button_prompts,    // SFR_BUTTON_PROMPTS

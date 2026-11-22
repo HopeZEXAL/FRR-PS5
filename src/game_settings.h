@@ -32,7 +32,6 @@ enum Id {
     no_flight,         // SFR_SUPER_SONIC_STAY_ON_BOARD: the kick dash starts no flight
     drain_riding,      // SFR_MOD_CHAOS_DRAIN_RIDING: ms a ring while Super Sonic rides (0 = none, the game's)
     drain_flight,      // SFR_MOD_CHAOS_DRAIN_FLIGHT: ms a ring while he flies ("game" = the game's third of a second)
-    hit_loss,          // SFR_MOD_CHAOS_HIT_LOSS: rings Super Sonic loses to a hit ("game" = the game's)
     // Controls
     touchpad_pointer,  // SFR_TOUCHPAD_POINTER
     button_prompts,    // SFR_BUTTON_PROMPTS

@@ -4,6 +4,10 @@
 > by YuutaTsubasa. The PS5 build, its builder and how to use them:
 > [ps5/README.md](ps5/README.md); downloads are on this fork's Releases page.
 > Please report PS5 problems here, not to the original project.
+>
+> **The PS5 port was made with AI ("vibe-coded").** Nearly all of its code was
+> written by Claude (Anthropic's AI model); HopeZEXAL directed it and tested
+> every build on a real PS5.
 
 # Free Riders Recompiled
 

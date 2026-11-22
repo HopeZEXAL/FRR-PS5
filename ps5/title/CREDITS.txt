@@ -60,7 +60,12 @@ llvm-mingw (Martin Storsjö): the toolchain the builder's programs are made with
 
 The PS5 port
 ------------
-Ported to the PS5 by <your name here>, with the help of Claude (Anthropic).
+Ported to the PS5 by HopeZEXAL, with Claude (Anthropic).
+This PS5 port was made with AI ("vibe-coded"): nearly all of its code was
+written by Claude, Anthropic's AI model. HopeZEXAL directed it: decided what
+the port should be and do, tested every build on a real PS5, and reported
+what worked and what didn't. (Free Riders Recompiled itself was also
+developed with the help of AI models, as its README says.)
 The icon and background art are original to this port.
 
 Sonic Free Riders, Sonic the Hedgehog and related names are trademarks of

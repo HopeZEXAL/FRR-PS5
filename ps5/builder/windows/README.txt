@@ -24,6 +24,10 @@ when reporting a problem.
 Only the Xbox 360 release of Sonic Free Riders is supported (the builder
 checks your disc's default.xex).
 
+This PS5 port was made with AI ("vibe-coded"): nearly all of its code was
+written by Claude (Anthropic's AI model), directed and tested on a real PS5
+by HopeZEXAL.
+
 Free Riders Recompiled for PS5 is a port of Free Riders Recompiled by
 YuutaTsubasa (https://github.com/YuutaTsubasa/Free-Riders-Recompiled) to the
 PS5, using PS5_Vulkan by Mihawk-99 and the PS5 payload SDK by John Törnblom.

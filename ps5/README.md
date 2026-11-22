@@ -6,6 +6,10 @@ console. Everything in this repository outside `ps5/` is Free Riders
 Recompiled, with the port's changes as ordinary commits on top; this folder
 holds what only the PS5 needs.
 
+**Made with AI.** This port was "vibe-coded": nearly all of its code was
+written by Claude (Anthropic's AI model), and HopeZEXAL directed it, deciding
+what it should be and do, and tested every build on a real PS5.
+
 **No game code or data is in this repository or its releases.** Players run
 the builder on a Windows PC with their own disc image: it recompiles the game
 code, prepares the game data and translates the shaders, on their PC.

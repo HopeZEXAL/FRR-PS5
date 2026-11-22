@@ -119,6 +119,7 @@ struct AchievementOverlay::Impl {
     // The tabs: 0 the achievements, 1 the port's settings (game_settings.h).
     int tab = 0;
     int setting = 0;  // the selected one, in the order of settings_order()
+    std::map<std::string, int> section_first;  // each section's first row shown
     std::vector<size_t> order;
     std::vector<AchievementProgress> progress;
     double progress_read_at = -1;
@@ -284,10 +285,27 @@ struct AchievementOverlay::Impl {
                         (left_w - 34) * s);
             y += 60;
         }
-        // The section's settings.
-        const float x = 22 + left_w + 14, w = W - x - 22, row_h = 70, gap = 6;
+        // The section's settings: as many rows as fit above the buttons'
+        // line, scrolled to keep the selected one shown.
+        const float x = 22 + left_w + 14, w = W - x - 22 - 16, row_h = 70, gap = 6;
+        const auto items = gs::in_section(chosen.section);
+        const int fit = int((H - 52 - top) / (row_h + gap));
+        int picked_at = 0;
+        for (size_t k = 0; k < items.size(); ++k)
+            if (items[k] == chosen_id) picked_at = int(k);
+        int& first_row = section_first[chosen.section];
+        first_row = std::clamp(first_row, (std::max)(0, picked_at - fit + 1), picked_at);
+        first_row = std::clamp(first_row, 0, (std::max)(0, int(items.size()) - fit));
+        if (int(items.size()) > fit) {
+            const float track_h = fit * (row_h + gap) - gap, bx = W - 30;
+            canvas.fill_round_rect(bx * s, top * s, 8 * s, track_h * s, 4 * s, overlay_rgb(0x02103A, 0.8f));
+            const float thumb_h = (std::max)(30.0f, track_h * float(fit) / float(items.size()));
+            const float thumb_y = top + (track_h - thumb_h) * float(first_row) / float(int(items.size()) - fit);
+            canvas.fill_round_rect(bx * s, thumb_y * s, 8 * s, thumb_h * s, 4 * s, panel_edge);
+        }
         y = top;
-        for (const auto id : gs::in_section(chosen.section)) {
+        for (int k = first_row; k < int(items.size()) && k < first_row + fit; ++k) {
+            const auto id = items[size_t(k)];
             const gs::Setting& item = gs::settings()[size_t(id)];
             const bool picked = id == chosen_id;
             if (picked) {
@@ -299,12 +317,17 @@ struct AchievementOverlay::Impl {
             const bool locked = item.offline_only && gs::online();
             const int at = gs::index(id);
             const char* label = locked ? "Off online" : item.labels[size_t(at)];
-            const float right = x + w - 20, value_left = right - 170, centre = (value_left + right) / 2;
-            const float lw = fonts.measure(label, 22 * s, OverlayFonts::bold), aw = fonts.measure(">", 22 * s, OverlayFonts::bold);
+            const float right = x + w - 20, value_left = right - 230, centre = (value_left + right) / 2;
+            const float aw = fonts.measure(">", 22 * s, OverlayFonts::bold);
+            // The value between the arrows, smaller when it would not fit.
+            float value_size = 22;
+            while (value_size > 14 && fonts.measure(label, value_size * s, OverlayFonts::bold) > (230 - 2 * aw / s - 16) * s)
+                value_size -= 1;
+            const float lw = fonts.measure(label, value_size * s, OverlayFonts::bold);
             const OverlayColor arrows = picked && !locked ? sonic_yellow : text_dim;
             canvas.text(fonts, "<", value_left * s, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
             canvas.text(fonts, ">", right * s - aw, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
-            canvas.text(fonts, label, centre * s - lw / 2, (y + 32) * s, 22 * s,
+            canvas.text(fonts, label, centre * s - lw / 2, (y + 32) * s, value_size * s,
                         locked ? text_dim : at != item.fallback ? sonic_yellow : text_white, OverlayFonts::bold);
             const char* when = item.applies == gs::Applies::restart     ? "Restart"
                                : item.applies == gs::Applies::next_race ? "Next race"

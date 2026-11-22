@@ -1,0 +1,855 @@
+> This is the README of [Free Riders Recompiled](https://github.com/YuutaTsubasa/Free-Riders-Recompiled), the project this PS5 port is built on, kept here as it is upstream. The PS5 port's README is [README.md](README.md).
+
+# Free Riders Recompiled
+
+[繁體中文](README.zh-TW.md)
+
+Free Riders Recompiled is an unofficial port of the Xbox 360 version of *Sonic
+Free Riders* for Windows, Linux and Android, built through static recompilation.
+Play with a controller or keyboard, use **Kinect / Kinect v2 or webcam motion
+controls on Windows**, and bring your own **VRM model** to the in-game AVATAR
+rider. Kinect v2 support is experimental and still needs hardware validation.
+
+The game's PowerPC code is translated to C++ with
+[XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and its Xenos shaders
+with [XenosRecomp](https://github.com/sonicnext-dev/XenosRecomp), then runs on
+a native runtime that stands in for the console's kernel, graphics, audio,
+input and Kinect.
+
+How it was made, step by step, with the numbers behind each step: the
+[Recompiled Handbook](https://yuuta-tsubasa.studio/Free-Riders-Recompiled/)
+(English and Traditional Chinese; its source is [site/index.html](site/index.html)).
+
+**This project does not include any game assets. You need your own legally
+acquired copy of the game (the USA/Europe disc) to play it:** the launcher
+installs the game's data from your disc image. Prebuilt versions are on the
+[Releases](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases)
+page; to build it yourself, see [Building](docs/building.md).
+
+> [!IMPORTANT]
+> This is a work in progress. The game boots, its menus work and races can be
+> played, but many parts of it are untested and it may stop or misbehave.
+
+![The launcher](docs/images/launcher.png)
+
+## Table of Contents
+
+- [Status](#status)
+- [Release notes](#release-notes)
+- [System Requirements](#system-requirements)
+- [How to Install](#how-to-install)
+- [Settings](#settings)
+- [How to Build](#how-to-build)
+- [Controls](#controls)
+- [Kinect and Kinect v2](#kinect-and-kinect-v2)
+- [Camera motion input](#camera-motion-input)
+- [VRM Avatar models](#vrm-avatar-models)
+- [Online play](#online-play)
+- [FAQ](#faq)
+- [Repository Layout](#repository-layout)
+- [Credits](#credits)
+- [License](#license)
+
+## Status
+
+What works today:
+
+- Booting from the title screen through the menus into races: Free Race from
+  start to results, and Grand Prix from its story scenes into the first race.
+- Direct3D 12 and Vulkan rendering, with the shaders translated as the game
+  meets them; sound; saving and loading records.
+- Playing without Kinect: the Kinect is emulated. Buttons stand in for the
+  voice commands the menus understand, and the pad drives the body a race
+  reads (leaning, jumping, kick dash, grabbing, tricks).
+- Physical Kinect and Kinect v2 input on Windows, with sensor skeletons
+  passed to the game. Xbox 360 Kinect has been tested through races;
+  Kinect v2 support is experimental. See [setup and requirements](#kinect-and-kinect-v2).
+- A launcher that installs the game from your disc image and keeps its
+  settings, in English or Traditional Chinese, on every platform.
+- Linux (Vulkan, SDL2), and Android (arm64-v8a) with on-screen touch controls
+  and tilt steering.
+- Optional webcam motion input for 1P on Windows, with estimated 3D body
+  joints, controller handoff and a separate skeleton debug window.
+- Experimental custom VRM Avatar models, selected in the launcher, with
+  game-driven animation and hand-held items.
+- File-replacement mods in HedgeModManager's format, managed in the
+  launcher's Mods tab ([Mods](docs/mods.md)).
+
+Known limits:
+
+- Only the USA/Europe disc is supported.
+- Much of the game has not been played through yet; stages and modes beyond
+  those above may stop on something the runtime does not do yet.
+- Linux and Android use shaders translated beforehand on Windows
+  (`shaders.pack`, included in the releases). The game creates all of its
+  shaders while it boots; releases include the matching shader pack.
+- Android has been tried in the emulator, on Pocket S2 Pro (Adreno 750),
+  and on AYN Thor (Adreno 740). The latest Android 10+ build completed a
+  race on Thor at approximately 23–24 FPS with race time matching real time.
+  Intro movies can still play slowly; this does not imply 60 FPS or the
+  same performance on other devices. See [Android performance](docs/android-performance.md).
+
+Progress notes (mostly in Traditional Chinese) are in [docs/](docs/), starting
+with [docs/progress.md](docs/progress.md).
+
+## Release notes
+
+- [v0.1.0 — First playable preview](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.1.0)
+  Released Windows, Linux and Android builds, with playable menus and races, save support, and controller/keyboard gameplay without Kinect. Included an English/Traditional Chinese launcher and Android touch controls and tilt steering.
+- [v0.1.1 — Early stability and rendering fixes](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.1.1)
+  Fixed a Grand Prix loading failure, removed accidentally enabled profiling overhead, and corrected rendering at non-native window sizes. Improved Android texture compatibility and surface recovery, and bundled a complete shader pack.
+- [v0.1.2 — Race results fix](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.1.2)
+  Fixed the game stopping at race results when it attempted to award an achievement. Achievement requests are now handled locally without Xbox Live.
+- [v0.1.3 — Customizable controls](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.1.3)
+  Added desktop settings for player input sources, controller selection and keyboard/gamepad bindings. Improved Vulkan compatibility with display surfaces that lack certain capabilities.
+- [v0.1.4 — Crouch and jump fixes](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.1.4)
+  Fixed controller input conflicts that could cancel crouch charging or jump release, including when holding the left stick down.
+- [v0.1.5 — Local two-player support](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.1.5)
+  Added independent player input routing and split-screen corrections. Fixed Gear selection getting stuck after Player 1 confirmed, reduced repetitive input logging, and removed unnecessary CPU queries.
+- [v0.2.0 — Webcam motion controls](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.2.0)
+  Added optional Windows webcam controls using estimated 3D body movement, a skeleton debug window, and automatic controller/camera handoff. Improved motion gestures and fixed single-player viewport stretching and exposure when 2P was disabled.
+- [v0.2.1 — Shader and Windows startup fixes](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.2.1)
+  Corrected the incompatible shader pack shipped with v0.2.0, which could cause a white screen or Vulkan device loss. Added shader-pack validation and bundled the D3D12 Agility runtime for affected Windows 10 systems.
+- [v0.3.0 — Custom VRM avatars](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.3.0)
+  Added experimental VRM 0.x/1.0 models for the in-game AVATAR rider, with game-driven animation, stance changes and held-item positioning. Models can be selected through the launcher.
+- [v0.4.0 — Real Kinect support](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.0)
+  Added physical Kinect input on Windows, sensor previews and Kinect v1 tilt controls. Improved player tracking, webcam handling and Windows graphics compatibility. Xbox 360 Kinect has been tested in races; Kinect v2 remains experimental.
+- [v0.4.1 — Rendering options and performance work](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.1)
+  Fixed shader reload failures during scene changes and controller-related rider pose distortion. Added independent internal rendering resolutions from 360p to 1440p and reduced CPU/rendering overhead.
+- [v0.4.2 — Settings and language selection](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.2)
+  Reorganized launcher settings, added game language selection, and fixed startup failures caused by unsupported system regions.
+- [v0.4.3 — Pipeline preparation and handheld improvements](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.3)
+  Added startup preparation and caching of known graphics pipelines to reduce compilation stalls during gameplay. Improved Windows timing, worker synchronization and CPU overhead, and introduced an optimized Android 10+ APK alongside the Android 9-compatible build.
+- [v0.4.4 — Android race timing and CPU improvements](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.4)
+  Improved Android CPU scheduling and guest execution overhead, corrected race simulation timing at lower frame rates, and fixed Vulkan shader compatibility on GPUs without 64-bit integer support. Racing was verified at approximately 23–24 FPS with time matching real seconds on AYN Thor; Intro movies remain slower than expected.
+- [v0.4.5 — Android Intro playback improvements](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.5)
+  Reduced ARM64 movie-decoding overhead with faster vector memory operations. On the tested AYN Thor, maximum sampled Intro video delay fell from several seconds to under one second, while race timing remained correct. Some playback delay may remain on other devices.
+- [v0.4.6 — Course stability and handheld improvements](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.6)
+  Fixed low-frame-rate traversal failures in Frozen Forest, Final Factory, Metropolis Speedway and Forgotten Tomb, plus loading and long-session stability issues. Improved controller steering and side reach, Android rotation recovery, race UI timing and texture handling. Added Android diagnostic ZIP export and further CPU/rendering optimizations; performance still varies by device.
+- [v0.4.7 — Windows CPU optimizations and rendering stability](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.4.7)
+  Reduced Windows guest checkpoint overhead and added D3D12 draw recording on a render thread. Fixed stale resolved textures when guest memory is reused and improved cleanup after rendering errors. Added isolated benchmark tooling and expanded rendering regression coverage. Vulkan retains synchronous recording by default; Android performance gains are not established by this release.
+- [v0.5.0 — Unleashed/Marathon-style architecture](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.5.0)
+  Moved the runtime to the Unleashed/Marathon Recompiled model: one render target per guest surface with deferred and depth resolves (race shadows now appear), direct guest memory access, a host o1heap for the title's heap and physical memory, every guest thread running in parallel with per-subsystem locks instead of a global lock, the render thread on every backend, and real-time race stepping on every platform. On the tested AYN Thor a race went from about 25 to about 49–50 FPS.
+- [v0.5.1 — Controller air tricks](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.5.1)
+  Fixed air tricks with a controller: turning the left stick in the air now raises a jump's rating, as turning the body does with Kinect. Also integrates a faster guest-memory path for the checked (debugging) build.
+- [v0.5.2 — Air trick landing fix](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.5.2)
+  Spinning the left stick for an air trick no longer leans or accelerates the board, which had carried trick jumps off the side of Rocky Ridge out of the course.
+- [v0.5.3 — Jump physics and Retry fix](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.5.3)
+  Desktop races step one original frame at a time again, so charged jumps off the side of Rocky Ridge land back on the course. Retrying a race from the pause menu no longer brings the confirmation back and leaves it stuck on screen.
+- [v0.5.4 — Grey flash fix](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.5.4)
+  Removed the single frames of flat grey that flashed now and then during races: a HUD sprite the game parks far off screen was sometimes drawn across the whole screen. Added diagnostics for stalls and single-colour frames.
+- [v0.5.5 — Mali GPU start-up fix](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.5.5)
+  Android phones and tablets with a Mali-G57 GPU (Helio G99, such as the Galaxy Tab A9) no longer crash at start-up: the renderer asked for one more descriptor set than these GPUs allow. The log now names each graphics start-up step.
+- [v0.5.6 — Air tricks on side jumps, touch pause menu](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.5.6)
+  Spinning the stick in the air raises a side jump's rating again. On touch screens the on-screen stick turns the pause menu's wheel.
+- [v0.6.0 — Mod support](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.0)
+  The game loads file-replacement mods in HedgeModManager's format, the one Unleashed and Marathon Recompiled use. The launcher's new Mods tab switches them on and off and sets their order.
+- [v0.6.1 — Two players and Relay Race on controllers](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.1)
+  Each player turns, confirms and backs out of the two-player menus with their own controller, and either can pause; a guest second player no longer adds a 10-second wait. Relay Race works with controllers: A swaps in the next racer. The launcher's settings can all be reached with a controller. 4-core CPUs keep the main thread's core to itself, and frames over 250 ms are logged.
+- [v0.6.2 — Fewer freezes, START skips story scenes](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.2)
+  The race and Relay hand-over freezes of up to a few seconds are gone: the main thread no longer spins on a lock other threads hold across system calls. START skips a World Grand Prix story scene, and the results screen's Kinect Guide no longer closes the game.
+- [v0.6.3 — Any install folder, voices apart from text, steadier sound](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.3)
+  The game starts from a folder with non-Latin letters on Windows, and full screen works with Vulkan on Linux. Voices can be English or Japanese apart from the text. Sound keeps a short cushion against crackles, and 4-core CPUs no longer pin the main thread. The programs have an icon, and HedgeModManager can find the game and manage its mods.
+- [v0.6.4 — No more getting stuck at start with Multi-core execution off](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.4)
+  With the launcher's Multi-core execution turned off the game got stuck at start on every device. The switch is gone: the game's threads always run in parallel, and an old setting that turned it off is ignored.
+- [v0.6.5 — Index buffers kept on the GPU (test build)](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.5)
+  Index buffers the game leaves unchanged stay on the GPU instead of being decoded and copied for every draw, and cached buffers are found without checking memory views each time. A test build for slower CPUs; `SFR_INDEX_CACHE=0` turns the new cache off.
+- [v0.6.6 — Crash records in the Android diagnostic ZIP (test build)](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.6)
+  On Android 11 and later the diagnostic ZIP now says how the game last ended, with the system's crash record (tombstone) when it crashed in native code, so a crash that leaves nothing in the log can be located. Also has v0.6.5's index cache.
+- [v0.6.7 — Starts on Vulkan 1.1 phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.7)
+  Phones whose GPU driver offers Vulkan 1.1, such as the Snapdragon 8 Gen 1's Adreno 730 on some devices, crashed at the game's first frame; the crash record from v0.6.6 showed why. Includes v0.6.5's index buffers kept on the GPU and v0.6.6's crash records. Its fix did not take effect on those phones; see v0.6.8.
+- [v0.6.8 — Vulkan 1.1 phones, second fix](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.8)
+  v0.6.7 still crashed at the first frame on Vulkan 1.1 phones: its check could not see that the driver lacked the function. The function is now asked of the GPU driver itself, under the name that driver's Vulkan version uses.
+- [v0.6.9 — Faster races on Android](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.9)
+  On phones with one core faster than the rest, the game's main thread now gets that core: on an AYN Thor a race went from 45 to about 56 fps while racing, and to 60 at the start line.
+- [v0.6.10 — Less GPU work under Vulkan](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.10)
+  Vulkan shaders read their constants from uniform buffers instead of through buffer addresses, which phone GPUs can load once per draw: on an AYN Thor the GPU time per frame fell from about 14.8 to 10 ms. Frame rate there is unchanged (the game's CPU side now limits it), but the GPU has more headroom. Shader packs from earlier versions do not work with it.
+- [v0.6.11 — A race crash on 4-core PCs](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.6.11)
+  Part of each race frame runs on the game's job threads, and the game waited only 16 ms for them before going on. On slower 4-core PCs a job could still be reading the racer list when the game moved on, which crashed races (Issue #64). The game now waits for those jobs to finish; the race keeps its frame rate.
+- [v0.7.0 — Online play](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.7.0)
+  The game's Xbox LIVE mode works again, on this project's own server: one player's game hosts, the others join over the network, and players on Windows, Linux and Android race together (three devices tested; the lobby holds eight). See [Online play](#online-play).
+- [v0.7.1 — Avatars online, and a sign while a model loads](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.7.1)
+  An online race with a player using AVATAR closed the games of the others: a game without a custom model had its avatar system off and could not load another player's AVATAR. Online play now always starts the avatar system. A custom VRM model now loads in the background, with "LOADING AVATAR MODEL" and its progress shown in the corner, instead of the game appearing to freeze.
+- [v0.7.2 — 4K rendering and steadier Kinect v2](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.7.2)
+  **Render Size** now offers 3840 x 2160 (4K, 300%) beside 360p to 1440p (Issue #94). A Kinect v2's joints are smoothed the way Kinect v1's SDK smooths its own, and the launcher's Kinect settings gain smoothing, lean sensitivity and crouch depth (Issue #97).
+- [v0.7.3 — Pause gestures, steadier menus, and more from knuckleslee](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.7.3)
+  Contributions by knuckleslee: pause a race with the Kinect's Pause Gesture or a Kinect v2's Stop Sign; a steadier menu cursor for motion input; the frame rate in the window title on Windows; adjustment windows when the game asks for the Kinect troubleshooter or Kinect Guide; and a choice of save folder in the launcher.
+- [v0.8.0 — Ultrawide displays](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.8.0)
+  Races fill displays wider than 16:9 (21:9, 32:9 and beyond) with a wider view and the HUD at the screen edges; menus stay centred over a full-width backdrop, and two-player screens keep the original 16:9 picture (knuckleslee's #112–#114). The launcher gains Display Mode (Borderless or Windowed), any window size, and Render Size as a scale of the output, starting at the original 720 lines. Both players holding LT hold hands in a Tag Race, BACK swaps racers in a Relay Race and X confirms dialogs, as in the No Kinect Patch (Issue #109). On a Kinect v2 a jump with both feet now jumps, and the display no longer turns off while playing (Issue #97).
+- [v0.8.1 — Full screen on Android](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.8.1)
+  The game always fills a phone's display: a phone that had run an older version kept the status and navigation bars over the game (Issue #118). Minimizing the game no longer closes it on D3D12.
+- [v0.8.2 — Two players on ultrawide displays](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.8.2)
+  Two-player races widen too on a display wider than 16:9: each half of a split race, a Tag Race holding hands and their On your Gear screen fill the frame, with each player's HUD at their own edge.
+- [v0.8.3 — Kinect jump diagnostics](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.8.3)
+  With a real Kinect, `game.log` records each crouch and jump the game detects and how high the hips went, so a jump that does not register can be diagnosed from the log (Issue #97).
+- [v0.9.0 — Races keep real time on slow devices](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.9.0)
+  Races keep the console's fixed step everywhere (side ramps no longer throw a racer off the course on a slow phone, Issue #123) and keep real time by not drawing some frames, which now also leave out most of the game's own drawing work. On ultrawide displays the race HUD is placed by which part of the game draws it, so text, the goal notices and the results stay together (Issues #131, #124). Also: a Kinect lean calibration fix (#132), a list of avatar models in the launcher (#132), a Linux hint when no file dialog is installed (#130), and guest memory on 16 KiB-page hosts.
+- [v0.9.1 — Map, Kinect calibration and dialogs](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.9.1)
+  The race map stays with its markers at a wide screen's edge (Issue #145). The launcher's Kinect preview can calibrate, setting the crouch depth from your own crouch (#97, #132). Linux file dialogs use the desktop's own portal (#130). On Windows the game's window keeps answering while the game is busy, and the launcher can show a webcam's picture.
+- [v0.9.2 — Big jumps on slow phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.9.2)
+  On a phone that can't keep 60 fps, a racer no longer falls short of Dolphin Resort's big jump: part of the game's work that frames left undrawn skipped is needed for the jump, and it now always runs.
+- [v0.10.0 — macOS and iOS](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.0)
+  First builds for Apple Silicon Macs (`FreeRidersRecompiled.app`, macOS 13.3 or later) and, untested, for iOS (an `.ipa` to sideload). On a Mac, races still run slowly. Also: on a slow phone the racer no longer falls out of Metropolis Speedway (Issue #154).
+- [v0.10.1 — Online check, smoother speed rail, older GPUs](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.1)
+  The launcher checks the online server before the game starts and says why it can't connect (Issue #161). A stall on Metropolis Speedway's speed rail is gone (#164). Vulkan GPUs without descriptor indexing get a fallback renderer (#134, untested on such hardware), and two rendering bugs are fixed.
+- [v0.10.2 — Newer Mali phones start](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.2)
+  Phones with a Mali-G715 or G720 GPU (Pixel 10a, POCO X7 Pro and others) crashed while preparing the graphics at start (Issues #166, #169). Their vertex shaders now go without the clip distance these GPUs don't support.
+- [v0.10.3 — Older Mali phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.3)
+  Vulkan 1.1 phones with an older Mali GPU (Mali-G72/G76, such as the Huawei P30 Pro in Issue #169) stopped before the game could start. The renderer now runs without the newer Vulkan features they lack; tested on a Mali-G72 test phone's graphics start-up, untested in a race there.
+- [v0.10.4 — Old Mali draws, Tensor speed, Kinect v2 trace](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.4)
+  Old Mali phones (Mali-G72/G76) no longer freeze on the first frame (#169). Phones with little CPU cores, such as the Pixel 10a, keep the game's helper threads off them (#176). Kinect v2: a Motion trace switch in the launcher and two jump fixes (#165). The fallback renderer for GPUs without descriptor indexing writes far fewer descriptors (#134).
+- [v0.10.5 — Touch-friendly launcher, first iPhone fixes](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.5)
+  The launcher scrolls with a finger and has wider scrollbars on touch screens (#186); the on-screen game controls come back with a touch even when a controller or keyboard is connected (#177). On iPhone the app has its icon, the launcher fits the screen, and a disc image in the app's Files folder is found without the picker (#185).
+- [v0.10.6 — Mac at full speed, iPhone starts](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.6)
+  On Apple Silicon Macs, races run at full speed: the GPU went from 6.5 to 60 fps on an M1. On iPhone the game no longer stops at its first frame (#185), and the launcher shows Chinese. On phones the game stays in landscape instead of turning with the phone (#177).
+- [v0.10.7 — Every race action on touch](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.7)
+  The on-screen controls gain the power-skill punches (LB/RB), a right stick to reach for Rings, and LT to hold hands in Tag races (#177), and now also draw on Windows touch screens. Android logs where race frame time goes, to find why some phones run slowly (#176).
+- [v0.10.8 — D3D12 on older drivers, very wide windows](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.8)
+  D3D12 no longer stops on drivers that can't flip the depth range, such as older NVIDIA drivers (#177). A very wide window draws as wide as the render size allows (up to about 11:1) instead of black bars from about 5.7:1 (#190).
+- [v0.10.9 — Fly board fix, frame skipping choice](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.9)
+  The Fly board at Dolphin Resort no longer sometimes launches a racer through the wall (#153). The launcher gains a Frame skipping choice for slow CPUs (#177). Phones with one much faster core, such as the Pixel 10a, run the game's main thread on it (#176).
+- [v0.10.10 — Test options, macOS with a Vulkan SDK installed](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.10)
+  The launcher gains a Test options page, so switches asked for in an issue are a choice instead of a command line. On macOS the game always uses its own MoltenVK, so an older Vulkan SDK on the Mac no longer stops it while preparing shaders (#207).
+- [v0.10.11 — Online server for the cloud, room passwords](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.11)
+  The online server comes as a Docker image to run on a cloud machine, so friends on different networks can race without anyone opening ports at home. A server can have a room password, entered in the launcher's Online play settings.
+- [v0.10.12 — Less work per frame](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.12)
+  The game's main thread does about 13% less work in a race frame on an Android handheld, so slower or hotter phones fall behind less often (#176).
+- [v0.10.13 — Touch the menus](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.13)
+  On a touchscreen the menu's hand cursor follows your finger, a tap on the title screen starts, and a new launcher setting skips the logo screens (#217).
+- [v0.10.14 — Even less work per frame](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.14)
+  Shader constants, the graphics lock and the translated game code each cost less in a race frame, so slower and hotter phones keep up longer (#176).
+- [v0.10.15 — Macs with Retina or scaled displays](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.15)
+  The game no longer closes right after Start on a Mac whose display is Retina or set to a scaled resolution (#191).
+- [v0.10.16 — Samsung Exynos phones (Xclipse)](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.16)
+  Phones with Samsung's Xclipse GPU, such as the Galaxy A55, no longer stay on "Preparing pipelines 0 of 455" (#224).
+- [v0.10.17 — Linux launcher on Fedora](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.17)
+  The Linux launcher no longer crashes at start on systems whose Chinese font it can't read, such as Fedora 45 (#232). On Windows the game window comes to the front when it opens.
+- [v0.10.18 — Labelled touch buttons, FPS counter](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.18)
+  The on-screen buttons show their Xbox names, an optional FPS counter can be shown in the game, touch controls are on by default on iOS, and Android uses the same app icon as the other versions (#236).
+- [v0.10.19 — Intel GPUs](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.19)
+  Races on Intel integrated GPUs (Vulkan) run several times faster: the shaders' dispatch loops that made them crawl at a few frames a second are rewritten, as on Macs (#239, #134).
+- [v0.10.20 — Occasional crash at start](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.20)
+  Fixes a crash that sometimes happened right after starting the game (seen on Macs, about one start in forty): the game's file reader could miss its first read.
+- [v0.10.21 — Touch button names switch](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.21)
+  The touch buttons' names can be turned off, and the FPS counter can be moved in from the corner so rounded phone screens don't cut it off (#236).
+- [v0.10.22 — Kinect v2 depth](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.22)
+  A Kinect v2 now gives the game a depth image like a Kinect (Xbox 360), with three depth views and a preview window, by knuckleslee (#231); the menus' ring and cursor line up on ultrawide screens (#230).
+- [v0.10.23 — Sound on iPhone and iPad](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.23)
+  The game plays sound on iOS again: the launcher no longer keeps the only sound output to itself (#249).
+- [v0.10.24 — Tilt to lean](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.24)
+  On phones, a new Tilt to lean switch, next to Tilt to steer (#247). In 0.10.25 it became Tilt to kick.
+- [v0.10.25 — Tilt to kick, faster races on slow phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.25)
+  A quick forward tip of the phone is a kick dash (#247). In a race the main thread now runs queued jobs itself instead of waiting for slower cores, and frames that aren't drawn skip the course's object drawing (#176).
+- [v0.10.26 — Leaner game code](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.26)
+  The translated game code drops 143,000 checks that only loops need, so on Android the main thread does about 14% less work in a race frame and the game is 9 MB smaller (#176).
+- [v0.10.27 — Shorter collision wait](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.27)
+  While a race frame waits for the game's collision batch, the main thread now runs that batch's queued jobs itself, so slow or throttled helper cores hold the race up about half as long (#176).
+- [v0.10.28 — Achievements](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.28)
+  Achievements the game awards are kept with the player's saves, and a new Achievements page in the launcher lists all 50 with their icons, descriptions and gamerscore (#263).
+- [v0.10.29 — Cheaper drawn frames](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.29)
+  About a hundred of the course's draws each frame no longer have their vertices copied and converted on the CPU; their vertex buffers stay on the GPU, so a drawn race frame costs less on slow or throttled phones (#176).
+- [v0.10.30 — Right colours at full-screen render size](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.30)
+  On Android, when the render size matched the screen exactly (e.g. 1920x1080 at 150%), red and blue were swapped. The shader dispatch-loop test option no longer stops the game on GPUs that can't build some rewritten shaders.
+- [v0.10.31 — Sound on hot phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.31)
+  On Android the game's sound threads now run ahead of the rest, so the sound keeps up when a hot phone slows its cores down, instead of crackling (#176).
+- [v0.10.32 — Main thread stays on the fast core](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.32)
+  On some phones Android forgot which cores the game's threads should use after the game had been in the background; the game now puts them back (#176).
+- [v0.10.33 — Ultrawide mission counters, quieter cutscenes on touch](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.33)
+  On wide screens a Grand Prix mission's counters (e.g. the Ring Challenge's ring count) now move with their panel. On phones the touch buttons hide in story scenes and the opening movie (a tap skips), and the Kinect-only icons hide when no camera is used (#274).
+- [v0.10.34 — Faster on slow processors, big jump fixed](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.34)
+  The game's translated code keeps the console's registers in the processor's own registers, about 13-18% less CPU time per race frame. On slow devices, where frames are skipped, racers no longer fall short of Dolphin Resort's big jump (#176).
+- [v0.10.35 — Achievements in the game, button prompts](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.35)
+  An earned achievement now pops up in the game as on the console, and L3 + R3 (or F1) opens a page of all achievements with progress counters (#288). The game's pose hints get the matching button underneath, and the launcher's Controls page lists what each button does (#284).
+- [v0.10.36 — Faster Android races](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.36)
+  The Android game is now built with profile-guided optimisation: the compiler arranges the game's code by how it actually runs on a phone, so slow phones skip fewer frames in races (#176).
+- [v0.10.37 — Sharp scaling](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.37)
+  The launcher's new **Sharp scaling** switch (Graphics, under Render Size) enlarges the picture by repeating its pixels instead of blurring them, so 540 or 720 lines on a bigger screen stay crisp (#301).
+- [v0.10.38 — Camera motion on Android and Linux](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.38)
+  The Android APK and the Linux tarball now carry the pose models and runtime, so Camera > Motion works there as on Windows: a phone's own camera on Android (a device without one is never asked for the permission), a webcam on Linux (#305).
+- [v0.10.39 — Avatar award crash fixed; camera motion on macOS and iOS](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.39)
+  Winning a race that earns one of the game's Avatar awards (seen after Tag and Relay races) no longer stops the game (#317). The macOS and iOS apps now carry the pose models, so Camera > Motion works there too, and a Kinect for Xbox 360 can be used on a Mac; macOS 14 or later is now needed (#305).
+- [v0.10.40 — Kinect v2 on a Mac](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.40)
+  The Mac app can now read a Kinect for Xbox One (Kinect v2) as well as a Kinect for Xbox 360: choose Camera > Kinect v2 in the launcher. Every motion device, camera or Kinect, now reaches the game through the same path, so later devices only need their own part (#305).
+- [v0.10.41 — A Male / Female choice for each Avatar model](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.41)
+  Each model on the launcher's Avatar models page now has its own Male / Female choice, and the game uses the chosen model's body, so a female model races as the female Avatar with her own gear and board (#324).
+- [v0.10.42 — Fixes for online play, Chinese folders and the Android stop page](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.42)
+  Online, the game no longer closes on Linux and macOS when the server goes away (#328), no longer freezes when the server stops answering (#329), and no longer stops with an online name in letters other than English (#336). On Windows, mods load and the online name and password arrive intact when the game is in a folder with non-English letters (#330). On Android, the launcher shows why the game stopped instead of going back to its settings (#331).
+- [v0.10.43 — Reach with the right stick at any moment](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.43)
+  With a controller, pushing the right stick to a side now reaches for rings and poles at any moment in a race, as the No Kinect Patch allowed, instead of only now and then; the game also keeps how long the grab button has been held (#339, in part).
+- [v0.10.44 — Move along and hang on to Metropolis Speedway's train pole](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.44)
+  With a controller, the left stick now moves you along the train's pole in Metropolis Speedway, and you keep hanging on with the right stick let go, as with the No Kinect Patch (#339, in part).
+- [v0.10.45 — A Kinect on a Mac, tuned against a real recording](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.45)
+  On a Mac, the skeleton and player outline the game gets from a Kinect v1 or v2 now line up with what Microsoft's Kinect software gives on Windows: measured on a real recording, the joints are a few centimetres off instead of 10 to 30 (#342).
+- [v0.10.46 — A Test option to capture a race frame draw by draw](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.46)
+  For reports of scenery or characters missing on one GPU: Test options › Logs for a bug report › Capture a race frame draw by draw saves what each draw of one race frame did, so it can be compared with a PC (#344).
+- [v0.10.47 — Races draw their scenery on older Snapdragon phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.47)
+  On Qualcomm (Snapdragon / Adreno) GPUs the game now clips depth instead of clamping it, so the sky no longer covers the canyon, buildings and racers on drivers such as the Galaxy S20 FE's; Test options › Graphics › Clip depth turns it on or off (#344).
+- [v0.10.49 — The on-screen keyboard opens for the launcher's text boxes](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.49)
+  Tapping a text box in the launcher on Android (online name, server address, password) put the cursor in the box but opened no keyboard; the keyboard now opens, the page moves so the box stays visible, and Back closes it without leaving the page (#356).
+- [v0.10.48 — Frame skipping starts again on slow tablets](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.48)
+  One slow frame at the start of a race could keep Auto frame skipping off for the whole race, so a Galaxy Tab A9 (Mali-G57) raced at about 0.4 speed; skipping now tries again on the first late frame a second after the last skip (#1).
+- [v0.10.50 — Textures use their smaller copies for distant surfaces](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.50)
+  Textures now load the smaller copies (mip levels) the game stores beside them, as on the console, so distant surfaces shimmer less and the GPU reads less memory; on a Galaxy Tab S12 Ultra a race frame takes about 12 ms of GPU time instead of 12.7. Test options › Graphics › Texture mip levels › Off is the old way (#176). Also new, for testing: Test options › Gameplay › Race step rate runs races at 80 to 144 steps a second on screens faster than 60 Hz.
+- [v0.10.51 — Shorter wait after skipping the intro, and story scenes skip after a race](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.51)
+  After skipping the intro movie and logos, the game no longer shows a blank loading screen for several seconds before the title; story scenes in World Grand Prix can be skipped with START after a race too; the Linux game window has the Free Riders icon (#365). Mali phones and tablets also keep BC1 textures compressed as ASTC (#176).
+- [v0.10.52 — Smoother loading screens on phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.52)
+  Loading screens no longer load the same textures again every frame, which made them slow on phones (#365). On wide screens, a Damage Survival race's gauge keeps its frame around its fill (#365). Shadow maps are no longer copied each frame, which saves GPU time at high render scales (#176).
+- [v0.10.53 — Direct3D 11 for older graphics chips (experimental)](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.53)
+  PCs whose graphics chip has neither a Vulkan nor a Direct3D 12 driver, such as laptops with Intel HD Graphics 4000 or 4600, can now try **Graphics › Graphics backend › Direct3D 11 (experimental)** in the launcher; its shaders come prepared in the Windows download. It has not yet run on a real HD 4000 or 4600 (#359).
+- [v0.10.54 — Less GPU work per race frame on phones](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.54)
+  A race frame no longer clears the whole picture as a step of its own that a phone GPU writes out and reads back; the clear now happens as part of the next drawing. On a Mali tablet this cuts the GPU time per race frame by about 12% at 2.0x render size and about 8% at 1.0x. Both changes can be turned off in the launcher's **Test options › Graphics** (#176).
+- [v0.10.55 — Native Wayland windows on Linux](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.55)
+  On a Wayland desktop, the Linux launcher and game now open native Wayland windows instead of going through XWayland, when the system's SDL is 2.24 or newer. If the window misbehaves, the launcher's **Test options › Graphics › Use X11** goes back to X11 (#365).
+- [v0.10.56 — Races start on 4:3, 5:4 and portrait displays](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.56)
+  On a display whose mode is not wider than 4:3 (for example 1024x768 or 1280x1024, or a monitor turned upright), the game stopped with a `native-graphics-reset` message when a race was about to start. Races now start there, and the 16:9 picture is letterboxed as in any window of another shape (#365).
+- [v0.10.57 — Super Sonic can stay on his board](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.57)
+  With the Chaos Emeralds gear, a kick dash turns Super Sonic into his flying form, which loses rings over time. The launcher's new **General › Gameplay › Super Sonic: stay on the board** option keeps him on his board: the kick dash stays an ordinary kick dash. It is off by default (#379).
+- [v0.10.58 — Voice mods with larger files load Super Sonic's race](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.58)
+  With a voice mod whose files are larger than the original ones (for example GameBanana's Zero Gravity Voice Pack), choosing the Chaos Emeralds left the race on "Now Loading" forever. The game now gives its sounds more memory, so the race starts (#385).
+- [v0.10.59 — Android asks for a faster screen for races above 60 Hz](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.59)
+  With **Test options › Gameplay › Race step rate** above 60 (for example 120 or 144), Android kept the screen at 60 Hz, so races still showed only about 60 frames a second and the FPS counter said 60. The game now asks Android for a screen mode fast enough for the chosen rate. Whether the screen really switches still depends on the phone's own refresh-rate setting (#392).
+- [v0.10.60 — Super Sonic can have all types on his board](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.60)
+  With **Super Sonic: stay on the board** on, board Super Sonic has no type, so he can't grind rails, fly through flight rings or break through obstacles. The launcher's new **General › Gameplay › Super Sonic: all types on the board** option, shown when stay-on-board is on, gives him the speed, fly and power types, like the Omnipotence gear. Only players get them, not computer racers. It is off by default. Both Super Sonic options are off in online play (#393).
+- [v0.10.61 — Board Super Sonic grinds rails, and races above 60 Hz behave](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.61)
+  With **Super Sonic: stay on the board** and **Super Sonic: all types on the board** on, board Super Sonic now grinds rails; before, he rode past them (#393). With **Test options › Gameplay › Race step rate** above 60 (for example 120 or 144), computer racers no longer fly off side ramps into the sky, so the place counter is right again, and the camera now finishes moving from the starting view to the one behind the racer instead of staying stuck in between (#392, #400, #401).
+- [v0.10.62 — The Forgotten Tomb launcher and the Final Factory pole above 60 Hz](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.62)
+  With **Test options › Gameplay › Race step rate** above 60 (for example 120 or 144), the big launcher in Forgotten Tomb no longer throws you much too far, out of the course, and the pole you reach up and grab in Final Factory no longer slows you down. At the default 60 Hz nothing changes (#401).
+- [v0.10.63 — Older Mali phones no longer stop with a graphics error](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.63)
+  On older phones with an ARM Mali graphics chip, like the Galaxy A05 and A06, the game no longer stops with "native graphics pipeline creation failed" (#406).
+- [v0.10.64 — Expert courses above 60 Hz: the Final Factory skydive and the Metropolis Speedway launch](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.64)
+  With **Test options › Gameplay › Race step rate** above 60 (for example 120 or 144), the skydive in Final Factory Expert no longer falls too fast or breaks the camera, and the launch up the building in Metropolis Speedway Expert no longer hangs at the top. At the default 60 Hz nothing changes (#410).
+- [v0.10.69 — Older processors without AVX](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.69)
+  Windows and Linux PCs whose processor has SSE4.2 but no AVX (for example 1st-generation Intel Core i5/i7 and the Pentium or Celeron of that time) can now start the game: the launcher picks a version built for them by itself, with nothing to set. It runs slower on such old processors. On Windows, PCs from that time usually need **Graphics › Direct3D 11 (experimental)**. Processors without SSE4.2 (Core 2, Phenom II) still cannot run it (#432).
+- [v0.10.65 — Rocky Ridge minecart above 60 Hz: the lever and the jump into the cart](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.65)
+  With **Test options › Gameplay › Race step rate** above 60 (for example 120 or 144), the lever of the minecart in Rocky Ridge no longer ends up hanging upside down under the cart when you lean, and the jump into the cart lands right instead of flying too far. At the default 60 Hz nothing changes (#410, #401).
+- [v0.10.66 — CPU difficulty for Free Race](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.66)
+  A new launcher option, **General › Gameplay › CPU difficulty**: Newbie, Easy, Normal (the original game, the default) and Hard. It changes only the computer racers in an offline Free Race. Newbie and Easy keep them from riding far above their top speed; Hard makes them keep pace with you and catch up if you break away (#420).
+- [v0.10.67 — Hold to skip story scenes and movies](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.67)
+  Story scenes now skip only while you hold START (or keep a finger on the screen on Android) until the circle fills, so a tap or an accidental touch no longer skips them. Movies need START, A, B or Back held for half a second. The startup logos still skip with a press (#426).
+- [v0.10.68 — Dolphin Resort water ski above 60 Hz](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.68)
+  With **Test options › Gameplay › Race step rate** above 60 (for example 120 or 144), the racer no longer turns round and rides backwards behind the boat on the Dolphin Resort water ski, so the camera no longer looks at the racer's face and swings low beside them. At the default 60 Hz nothing changes (#410).
+- [v0.10.70 — Update notice, and the Linux application menu](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.70)
+  The launcher now tells you when a newer version is out, and its button opens the right download for your device in the browser. It checks at most once a day, sends no personal data, and can be turned off under **General › Updates**. On Linux the launcher also adds itself to your desktop's application menu; turn that off under **General › Desktop** (#365).
+- [v0.10.71 — Plain race loading screen, and the picture follows a resized window](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.71)
+  A new option, **General › Gameplay › Plain race loading screen** (off by default), shows a black screen with only Now Loading in the corner instead of the Omochao practice before a race; the race starts as usual. When you resize the game window, the picture is now redrawn at the new size once you stop resizing, instead of being stretched. A change of window shape (for example to ultrawide) still needs a restart to change the aspect ratio (#365).
+- [v0.10.72 — Round touch buttons on wide phones, and per-button touch options](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.72)
+  The touch buttons now stay round on wide phones with Aspect Ratio Auto, and on iPhones, instead of being stretched into ovals. A new page, **Controls › Touch and tilt › Customise touch buttons**, lets you hide any touch control, or only its name; for example, hide the left stick when you steer by tilting (#443).
+- [v0.10.73 — Plain race loading screen fixes on wide screens](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.73)
+  With **Plain race loading screen** on, wide screens (for example 20:9 phones with Aspect Ratio Auto) no longer show a half-window frame, with the touch buttons and frame-rate readout moved aside, after Now Loading goes. The hidden practice is now silent, and buttons pressed during the screen no longer change when the race starts (#365).
+- [v0.10.74 — Move and resize touch buttons](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.74)
+  A new page, **Controls › Touch and tilt › Move and resize touch buttons**, lets you drag each touch button to a new place and change its size, or reset one or all of them. A layout made on one screen shape still fits a screen of another shape (#443).
+
+## System Requirements
+
+- **Windows**: Windows 10 or 11 (x64), a GPU with Direct3D 12 (or Vulkan 1.2).
+  Since 0.10.53, older GPUs with only Direct3D 11 (such as Intel HD Graphics
+  4000/4600, or a GeForce 400/500 series) can try the experimental Direct3D 11 backend.
+- **CPU (Windows and Linux)**: a CPU with AVX (Intel Sandy Bridge, AMD Bulldozer or later)
+  runs the game at full speed. Older CPUs with SSE4.2 but no AVX (such as Intel
+  Core i3/i5/i7 of the Nehalem and Westmere generations, or Pentium and Celeron
+  chips without AVX) run a second copy of the game built without AVX; the launcher
+  picks it by itself. That copy is slower, and PCs that old usually also need the
+  Direct3D 11 backend above. CPUs without SSE4.2 (Core 2, Phenom II) cannot run the game.
+- **Linux**: x86-64 and a Vulkan 1.2 driver (tested on Ubuntu 22.04).
+- **macOS**: macOS 14 or later on Apple Silicon (tested on an M1 Mac mini); since 0.10.39, for the camera motion input's runtime.
+  The Vulkan driver (MoltenVK) is inside the app. Experimental: menus run at
+  full speed, but races are slow on an M1 for now.
+- **iOS**: iOS 16.3 or later, sideloaded; a game controller is needed.
+  Untested on a real device.
+- **Android**: Android 9 or later, arm64-v8a, Vulkan 1.1; about 2 GB free
+  for the installed game. Releases also offer an **Android 10+** APK using
+  native thread-local storage to reduce CPU overhead; prefer that build on
+  Android 10 or later. Android performance remains experimental; the latest
+  race timing and performance improvements were tested on AYN Thor and have
+  not yet been re-tested on Pocket S2 Pro.
+- Building needs the tools listed in [docs/building.md](docs/building.md).
+
+## How to Install
+
+1. Download the release for your system from
+   [Releases](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases):
+   the Windows zip, the Linux tarball, the macOS zip, the iOS `.ipa` or the
+   Android APK.
+   For Android 10+, choose `android10-arm64.apk`; the `android-arm64.apk`
+   package retains Android 9 compatibility. Both use the same app identity
+   and update existing installations without requiring an uninstall.
+2. Unpack it into a folder of its own (on Android, install the APK; on iOS,
+   sideload the `.ipa` with your own tool). On a Mac, open
+   `FreeRidersRecompiled.app` with right-click › **Open** the first time: it
+   is not notarised.
+3. Start `FreeRidersRecompiled` and choose your disc image (`.iso`) when the
+   launcher asks; it copies the game's data beside itself. Then press
+   **Start game**. On iOS you can instead copy the `.iso` with the Files app
+   to **On My iPhone › Free Riders**; the launcher finds it there.
+
+On Linux the launcher also adds **Free Riders Recompiled** to your desktop's
+application menu the first time it starts, so you can start it from there
+later: it writes `~/.local/share/applications/com.freeriders.recompiled.desktop`
+and its icon in `~/.local/share/icons/hicolor/256x256/apps/` (under
+`$XDG_DATA_HOME` when that is set). The entry starts the launcher from where
+it is; if you move the folder, the next start updates it. **General › Desktop ›
+Add to application menu** turned off removes both files. The launcher only
+ever changes files it wrote itself. Details are in [docs/linux.md](docs/linux.md).
+
+### Update notice
+
+At most once an hour the launcher asks GitHub whether a newer release is out.
+When there is one, a green **Version X is available** button appears at the top (and in
+**General › Updates**); it opens that release's file for your system in your
+browser: the Windows zip, the Linux tarball, the macOS zip, the iOS `.ipa`, or
+on Android the same APK you installed (`android10-arm64.apk` or the Android 9
+`android-arm64.apk`). Where a release has no file for your system it opens the
+release page. The launcher never downloads or installs anything itself.
+
+The request goes to `api.github.com` and carries nothing about you: no
+account, no cookies, only `FreeRidersRecompiled-launcher/<version>` as its
+User-Agent (GitHub sees your IP address, as with any visit). It runs in the
+background, gives up after a few seconds without a network and never delays
+**Start game**. The last answer is kept in `settings.ini` (`update_checked_at`,
+`update_version`, `update_url`), so the launcher asks at most once an hour.
+To turn it off, switch off **General › Updates › Check for updates**
+(`check_updates=0` in `settings.ini`). On Linux the request uses the system's
+libcurl (`libcurl.so.4`, installed on nearly every desktop); without it there
+is no check. Details are in [docs/update-notice.md](docs/update-notice.md).
+
+## Settings
+
+The launcher groups settings by what you want to change:
+
+| Category | Settings |
+| --- | --- |
+| General | Launcher, game and voice languages, movies, update check, restore defaults |
+| Graphics | Display mode (Borderless or Windowed; Borderless by default), window size, aspect ratio and UI alignment, backend, Render Size, VSync, expandable performance options |
+| Sound | Game volume and launcher sounds |
+| Controls | Each player's input source and controller, button/key bindings, Android touch and tilt |
+| Motion input | Kinect/webcam mode, device and preview, mirror, skeleton debug, voice commands |
+| Avatar models | Add custom VRM/GLB models and choose the one to use |
+| Mods | Switch file-replacement mods on and off and set their order ([Mods](docs/mods.md)) |
+| Achievements | The game's 50 achievements: which are unlocked and when, with icons and gamerscore |
+| Game files | Installation, data locations and shader pack |
+
+**Graphics** starts with **Display Mode**: **Borderless** (default) fills the
+display, **Windowed** uses the window size chosen below it (the window size rows
+are shown only in Windowed mode). **Render Size** sits right below
+**Graphics backend**: **Original** (default) renders the game's own 720 lines,
+as every earlier version did, whatever the window or display. The other stops
+are a **resolution scale** of the output size (the display's in Borderless mode)
+from 0.25x to 3.0x in steps of 0.25x: 1.0x renders at exactly the window or
+desktop resolution, lower values reduce GPU load, higher values supersample.
+**Sharp scaling** (off by default) enlarges a picture smaller than the window
+by repeating its pixels instead of smoothing them; a supersampled picture is
+still averaged down. Changes to game settings apply on the next game launch.
+
+**Achievements** lists every achievement with its icon, name, description and
+gamerscore, and the date each was unlocked, plus the totals (for example
+2 of 50, 25 / 1000 G). The game awards them as on a console, with no Xbox
+network: each one is kept with the player's saves (`achievements.txt` beside
+the player's save folder, see [Saves](docs/saves.md)), so it survives updates.
+Names, texts and icons come from the installed game's own title data, in the
+game language when the disc has it (English otherwise). Achievements that need
+a number of things (Bomb-Happy's 30 Target Torpedo hits, 16 wins, 10,000 Rings,
+every course of a mode ...) show how far the player is, read from the game's
+own save. **Achievement notifications** (on by default) shows the console's
+"Achievement unlocked" notification in the game.
+
+The window size defaults to the desktop size until you choose another. The last
+entry of the window size list, **Custom**, shows width and height boxes for any
+size from 160 to 16384 pixels per side.
+
+The window size list holds the resolutions the system reports for the display,
+plus common sizes and the desktop's; any other size is shown as **Custom**. The
+saved `fullscreen` key keeps its meaning (1 is Borderless, 0 is Windowed); a
+settings file without it now starts in Borderless.
+
+The window size list also offers common ultrawide sizes (2560 x 720,
+2560 x 1080, 3440 x 1440, 5120 x 1440). Two more options sit in the same group:
+
+- **Aspect Ratio** (`aspect_ratio`): **Auto** (default on Windows and Linux)
+  adapts the picture to the window or display; **16:9** (default on Android,
+  where a wider picture costs a phone frame rate) keeps the original picture.
+  Two-player races widen too: each half of a split race, a Tag Race holding
+  hands and their On your Gear screen fill the frame, with each player's HUD
+  at their own edge (`SFR_TWO_PLAYER_WIDE=0` keeps them 16:9 with black at the
+  sides). Both preserve the
+  selected output resolution. With Auto and a window (or display, in full
+  screen) wider than 16:9, the race's 3D view is widened (hor+), the race HUD
+  stays in a centered 16:9 area, menu, title and calibration backdrops fill the
+  whole width, and movies keep their 16:9 shape with black bars. 16:9 keeps the
+  original behaviour untouched.
+- **UI Alignment Mode** (`ui_align`): **Edge** (default) places the race HUD's side
+  groups at the screen edges; **Center** keeps the HUD centered. The row is only
+  shown with Auto; with 16:9 it is hidden, the original behaviour is untouched and
+  the stored choice is preserved. Menu content stays centered.
+
+The launcher sets `SFR_ASPECT_MODE` and `SFR_UI_ALIGN`, clears `SFR_ASPECT_RATIO`, and passes the
+selected window dimensions unchanged. Older `aspect_mode=original` settings load
+as 16:9. Changes apply on the next game launch.
+
+## How to Build
+
+In short, on Windows:
+
+```powershell
+python scripts/bootstrap.py
+./scripts/build_tools.ps1
+python scripts/rom_tool.py extract --iso "your disc.iso" --output private/game --path default.xex
+python scripts/prepare_recomp.py
+./scripts/build_shader_translator.ps1
+./scripts/build_tools.ps1 -Diagnostic
+./out/build/host/FreeRidersRecompiled.exe
+```
+
+The launcher asks for your disc image on first run and installs the game
+beside itself. Linux and Android builds, and what each step does, are in
+[docs/building.md](docs/building.md).
+
+## Controls
+
+| Action | Keyboard | Controller |
+| --- | --- | --- |
+| Menus: move / turn the menu ring | Arrow keys | D-pad |
+| Confirm (say "OK") | Z or Space | A / ✕ |
+| Back | Esc, X or Backspace | B / ○ |
+| Select (BACK) | Tab | BACK / Share |
+| Start, pause | Enter | START |
+| Race: lean | Arrow keys | Left stick |
+| Crouch (hold), jump (release) | Z or Space | A |
+| Kick dash | C | X |
+| Brake, grab | X | B |
+| Switch stance | V | Y |
+| Use / shake an item | F | RT |
+| Power skills (punch left / right) | Q / E | LB / RB |
+| Fly skill: rise (hold), come down (release) | Z or Space | A |
+| Hold hands (Tag Race, both players) | R | LT |
+| Swap in the next racer (Relay Race) | Z or Tab | A or BACK |
+| Hand cursor (Kinect-only menus) | I J K L | Right stick |
+| Achievements page (open / close) | F1 | L3 + R3 (click both sticks) |
+
+Xbox and PlayStation controllers both work. On Android, translucent touch
+buttons cover the same actions when no controller is connected (punches on
+the screen's left and right edges, a small right stick for reaching), and
+tilting the phone steers in a race. With **Tilt to kick** (launcher Controls,
+off by default) a quick tip of the phone's top edge away from you is a kick
+dash (X), measured from however you held it when the race started; tip it back
+before the next kick. Outside races a finger moves the Kinect
+hand cursor: touch anywhere away from the buttons and the cursor goes there
+(rest on an item to choose it, as with a hand); on the title screen a touch is
+START. In movies and story scenes, touch and hold anywhere (or hold START) to
+skip: half a second for a movie, until the SKIP gauge fills in a story scene;
+a brief touch skips nothing. Under Controls › Touch and tilt, **Customise touch
+buttons** hides any button you don't use (it then doesn't react: its spot is
+empty screen; with the stick hidden, tilting still steers) or only its name;
+**Button names** still turns every name off at once (#443). **Move and resize
+touch buttons**, below it, shows the game's screen with the buttons on it: drag
+a button to move it, touch it to choose it and set its size (half to twice as
+big, never smaller than START), or reset one or all. Each button keeps its
+distance from the nearer side (or from the middle), so a layout also fits a
+screen of another shape; the stick's area in races follows the stick to its
+side. On a PC the mouse moves the hand cursor the same way. Details: [docs/race-controls.md](docs/race-controls.md),
+[docs/pad-menus.md](docs/pad-menus.md).
+
+The **achievements page** lists all 50 achievements in the game with their
+progress (pausing a race the way the console's Guide did); D-pad or arrows
+choose, LB / RB or Page Up / Down turn a page, B or Esc closes it. On a touch
+screen, tap the "Achievement unlocked" notification or tap with three fingers
+to open it, drag to scroll and tap outside it to close. See
+[docs/achievements.md](docs/achievements.md).
+
+## Kinect and Kinect v2
+
+The Windows version supports physical **Kinect v1** and **Kinect v2** sensors
+for body tracking. Kinect is optional: controller and keyboard play do not
+require a sensor or its SDK.
+
+| Sensor | What you need | Current status |
+| --- | --- | --- |
+| Kinect for Xbox 360 / Kinect for Windows v1 | SDK 1.8 and a powered USB connection; the Xbox 360 sensor requires the full SDK, while Kinect for Windows v1 can use Runtime 1.8 | Xbox 360 Kinect tested through races on Windows 10 |
+| Kinect v2 / Kinect for Xbox One | SDK 2.0, USB 3.0 and a compatible powered PC adapter | Experimental; skeleton tracking is implemented, but hardware gameplay validation is still pending |
+
+Install the matching SDK, connect the sensor, then select **Kinect (Xbox 360)** or
+**Kinect v2 (Xbox One)** in the launcher's **Motion input > Camera** setting and choose
+**Open preview** to check tracking. Each choice opens its own generation, so with both sensors
+plugged in you can pick the v2. An older `settings.ini` with `camera=kinect` and only a v2
+connected still works: when no Xbox 360 Kinect opens, the v2 is used and `game.log` says so.
+There is no smoothing option any more: the game smooths a real Kinect's skeletons (v1 and v2) once,
+with the filter and settings the original game asks its Kinect library for.
+A Kinect v2 always hands the game a Kinect v1-style depth image made from its own depth.
+As on the console, a Kinect's race input always comes from the game's own detectors: the lean,
+crouch and jump read the depth image (crouch and jump the skeleton's hips as well), and the
+other gestures and the menus read the skeleton; nothing on the PC stands in for them. If the
+depth cannot be opened the game gets none, and `game.log` and the launcher's Kinect preview say why.
+Keep your whole body visible
+and allow enough space to move.
+
+Kinect v1 can supply skeleton, depth and color data. A Kinect v2 gives the game skeletons and a depth image made
+from its own depth;
+its color and depth images also appear in the launcher's preview (not yet
+verified on hardware). Physical Kinect input is Windows-only; Linux and Android releases
+do not provide it.
+
+SDK links, adapter requirements and troubleshooting:
+[Kinect sensor guide](docs/kinect-sensor.md) (Traditional Chinese).
+For motion controls with an ordinary webcam, see the next section.
+
+## Camera motion input
+
+![Camera-controlled gameplay alongside the live skeleton debug window](docs/images/camera-input-skeleton.png)
+
+*Gameplay and the skeleton delivered to the game, cropped from the same
+recording frame and arranged side by side. The debug window shows front and
+side views of the joints, without displaying the webcam image.*
+
+Windows releases include the models and runtime for webcam motion
+input. Select **Motion input > Camera > Motion** in the launcher and keep your whole body
+in view. **Skeleton debug window** opens front and side views of the joints
+the game receives; it does not show the camera image.
+
+Camera input controls 1P. Using the controller takes priority; after 1.5
+seconds without controller input, fresh camera tracking resumes. If tracking
+is lost, controller input remains available. Set 2P input to **Off** for
+single-player play.
+
+Inference runs locally using [ONNX Runtime](https://github.com/microsoft/onnxruntime)
+1.30.0 (MIT), with the [OpenCV Zoo MediaPipe pose model](https://github.com/opencv/opencv_zoo/tree/47534e27c9851bb1128ccc0102f1145e27f23f98/models/pose_estimation_mediapipe)
+and [person detector](https://github.com/opencv/opencv_zoo/tree/47534e27c9851bb1128ccc0102f1145e27f23f98/models/person_detection_mediapipe)
+(Apache 2.0). These models originate from Google's MediaPipe; this port uses
+their ONNX exports, without requiring the MediaPipe or OpenCV runtime.
+Model downloads are pinned by SHA-256 in
+[scripts/fetch_pose_model.py](scripts/fetch_pose_model.py). Licences and
+third-party notices are included in the `licenses/` folder of the Windows,
+Linux, macOS and iOS packages and in the Android APK's licence archive.
+
+A webcam estimates relative 3D pose; it does not measure depth like Kinect.
+The Android APK carries the same models and runtime and can use the phone's
+own camera (asked for the camera permission the first time; a device without
+a camera is never asked). The Linux tarball carries them too and reads a
+webcam through V4L2. The macOS app uses the Mac's camera, a USB webcam or an
+iPhone as Continuity Camera, and the iOS app the device's own cameras; both
+ask for the camera permission the first time, and only when there is a
+camera.
+Setup, gestures, source builds and limitations:
+[Camera input](docs/camera-input.md).
+
+## VRM Avatar models
+
+Starting with v0.3.0, you can use your own **VRM 0.x / VRM 1.0** model for the
+in-game **AVATAR** rider. Camera motion input is optional; controllers and
+keyboard controls work with the model too.
+
+![A custom VRM model riding an Extreme Gear during a race](docs/images/custom-vrm-gameplay.png)
+
+*A custom VRM model replacing the in-game AVATAR rider.*
+
+1. Open the launcher's **Avatar models** tab.
+2. Choose **Add model...** and select a `.vrm` or binary `.glb` file. Desktop
+   users can also type its path; Android imports a copy into the app's storage.
+   Models you add stay in the list, so you can switch between them later.
+   Choose **Male** or **Female** next to each model: the game gives a male
+   and a female AVATAR different gear and boards, and the model file does not
+   say which it is.
+3. Start the game and select **AVATAR** in the character menu, then choose
+   your Gear. AVATAR must already be available in your game save; selecting
+   a model does not unlock it.
+4. To change models, return to the launcher, choose another one and restart
+   the game. **Don't use a custom model** turns it off; **Remove** takes a model
+   off the list.
+
+One model setting is shared by both local players; it applies to whoever
+selects AVATAR, with separate poses for each player. Ordinary characters are
+unchanged. The model appears in Loading and races, follows the game's main
+body animation, jumps and stance changes, and supplies hand positions for
+held items. Models are read locally; no avatar model is bundled or uploaded.
+
+AVATAR can be chosen without a model too: it races with its gear and board
+but no rider drawn, and **NO AVATAR MODEL. CHOOSE ONE IN THE LAUNCHER** is
+shown in the corner for the first seconds of Loading.
+
+This is experimental. A `.glb` without VRM humanoid bones stays static.
+Full MToon shading, transparent blending, spring bones, facial expressions
+and finger animation are not implemented. Some poses and item grips can
+look different between models, and complex models can reduce performance.
+Windows D3D12/Vulkan gameplay has been checked; full two-player VRM gameplay
+and physical Linux/Android VRM gameplay still need broader testing.
+
+Troubleshooting and platform details: [VRM Avatar guide](docs/vrm-avatar.md).
+
+## Online play
+
+Starting with v0.7.0, the game's **Xbox LIVE** mode works again, on a server
+this project provides instead of Microsoft's: Create Match, Quick Match, the
+lobby and online races. Windows, Linux and Android players can race together.
+
+![Three devices in the same online race](docs/images/online-3-devices.png)
+
+*The same online race on a PC (the host), a ROG Xbox Ally X and an AYN Thor.*
+
+1. On every device: **Launcher → General → Online play → Xbox LIVE**.
+2. **One device hosts:** turn on **Host the server**. The launcher shows the
+   address the others enter ("Friends enter: 192.168.1.23"). The game runs the
+   server itself on TCP and UDP port 47800, and only while it runs. The first
+   time, Windows asks whether to let the game through its firewall: allow it
+   (private networks), or nobody can connect. Android needs no setup.
+3. **The others connect:** enter the host's address under **Server address**
+   (for example `192.168.1.10`), and give each player a different **Online
+   name**. Your save and profile stay as they are. **Test connection** checks
+   the server from the launcher, and **Start game** checks it again: if the
+   server cannot be reached, the launcher says why (address not found, nothing
+   listening, no answer) before the game starts. A game started before the
+   host's keeps trying every 5 seconds, and its Xbox LIVE opens once it is in.
+   The host may set a room **Password**; the others enter the same one (it is
+   sent unencrypted, so don't reuse a real password).
+4. In the game, open **Main Menu → Xbox LIVE**. The host chooses
+   **Create Match**; the others choose **Quick Match** and press **A** on the
+   lobby they find. The host starts the race.
+
+Tested on a home network: three devices in one race, the host on a PC or on an
+AYN Thor, and a player leaving mid-race. Playing over the internet needs
+port 47800 forwarded to the host; that has not been tested. Leaderboards,
+Xbox LIVE Party and voice chat are not supported; achievements are kept
+locally (see [Settings](#settings)).
+
+**Playing with friends far away:** instead of forwarding ports, run the server
+in the cloud (a VPS or a free cloud VM). Each release publishes it as a Docker
+image, `ghcr.io/yuutatsubasa/free-riders-server`; every player enters that
+machine's address, and only the server needs TCP and UDP port 47800. Every
+race packet goes through it, so pick a region near all the players. Steps:
+[server/README.md](server/README.md).
+
+Details and how it works: [Online play](docs/xbox-live.md).
+
+## FAQ
+
+**How do I select Spanish or another game language?** Open **General > Game language**
+in the launcher and choose English, Japanese, German, French, Spanish or Italian,
+then start the game. **System language** is the default. This is separate from
+the launcher's English/Traditional Chinese interface. Unsupported system languages
+use English; unavailable or unmapped system countries use the US profile and
+record a warning in `game.log`, without requiring changes to your OS settings.
+For direct runtime launches, set `SFR_GAME_LANGUAGE` to `auto`, `en`, `ja`, `de`,
+`fr`, `es` or `it`. Invalid values behave as `auto`.
+
+**How do I choose Vulkan or D3D12?** On Windows, open **Graphics > Graphics backend**
+and choose either backend before starting the game. New settings default to Vulkan;
+existing saved choices are preserved. Linux and Android use Vulkan.
+
+**Can I change the game's internal resolution?** Yes. **Render Size**
+is **Original** (720 lines, the default) or a resolution scale of the window (or
+display in Borderless mode) from 0.25x to 3.0x in steps of 0.25x; 1.0x matches
+the window/desktop resolution, so a 1920 x 1080 window renders 1920 x 1080.
+Apply it before starting the game. Lower values may help a limited GPU; higher
+values supersample at a greater cost (each side is capped at 8192 pixels). An
+older `render_scale` setting becomes the nearest step for the saved window. See
+[Internal resolution](docs/internal-resolution.md).
+
+**How can I compare performance without changing game speed?** Keep the normal
+60 FPS cap and compare the same part of the same course, including slower-frame
+times. Uncapping currently speeds up the game logic too. Recording instructions
+and the limits of testing on a faster PC: [Performance measurements](docs/benchmarking.md).
+Guided 1P, 2P, Camera and VRM comparisons: [Benchmark scenarios](docs/benchmark-scenarios.md).
+Current local verification and hardware limits: [Validation report](docs/performance-resolution-validation.md).
+
+**Why is there a preparation screen before the game starts?** Builds with a pipeline
+manifest prepare known graphics pipelines before the first game frame, reducing
+first-use compilation stalls. The first start may take longer; later starts reuse
+this device's cache. Keep the `pipeline-cache` folder. Close the window or press
+Escape to cancel (hold Back on Android). Unrecorded combinations can still compile
+during play. See [Pipeline preparation](docs/pipeline-preparation.md).
+
+**Where are the settings and saves?** Beside the launcher: `settings.ini`,
+`save/` and `game.log` (on Android, in the app's files directory). The game
+plays as a local profile named "Player"; answer *Yes* when it asks "Are you
+Player?" and create save data when offered.
+
+**Why does the game need `shaders.pack` on Linux and Android?** The Xbox
+shaders are translated with Windows tools while the game runs. The pack
+carries them, already translated, to machines without those tools; the game
+creates every shader it has while it boots, so a pack made with
+`python scripts/pack_shaders.py` after starting the game once on Windows
+(under Vulkan too, for the SPIR-V) is complete. Releases include one.
+
+**Can I use mods?** File-replacement mods, yes, since v0.6.0: put each in its
+own folder in `mods` beside the launcher and switch it on in the **Mods** tab
+([Mods](docs/mods.md)). Sound, texture and text mods made for the original
+game work once their files sit in a folder with a `mod.ini`; for example the
+[Traditional Chinese mod](https://github.com/YuutaTsubasa/Free-Riders-Recompiled-Traditional-Chinese-Mod).
+Code mods do not apply: the No Kinect Patch changes the original executable
+for Xenia, and the Kinect emulation here is the project's own code (see
+[Credits](#credits)).
+
+**Why does the release need my disc?** The release holds the recompiled
+program, but none of the game's data (models, textures, sound, movies): that
+comes from your own disc image. The workflow in `.github/workflows` builds and
+tests only the parts that contain nothing from the game; releases are built
+from a disc on the maintainer's machine ([docs/releasing.md](docs/releasing.md)).
+
+## Repository Layout
+
+| Path | Contents |
+| --- | --- |
+| `src/` | The runtime (kernel, memory, threads, files, graphics, audio, input, Kinect emulation), the launcher and the game-specific hooks |
+| `scripts/` | Bootstrap, disc tools, code generation, builds and packaging |
+| `config/` | Pinned dependency revisions, the supported disc's fingerprints, recompiler configuration |
+| `tests/` | C++ (CTest) and Python tests |
+| `android/` | The Android app's manifest, activities and resources |
+| `patches/` | Patches bootstrap applies to pinned dependencies |
+| `docs/` | Building, platform notes and the development record |
+
+Not in the repository, by design (see `.gitignore`): your disc image
+(`__ROM__/`), anything extracted from it (`private/`, `game/`), generated code
+and build outputs (`out/`, `generated/`), downloaded dependencies (`tools/`),
+saves and local reference checkouts.
+
+## Credits
+
+- [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) and
+  [XenosRecomp](https://github.com/sonicnext-dev/XenosRecomp): the PowerPC and
+  shader recompilers.
+- [Unleashed Recompiled](https://github.com/hedge-dev/UnleashedRecomp) and
+  [Marathon Recompiled](https://github.com/sonicnext-dev/MarathonRecomp): the
+  ports this project learned from (runtime layout, graphics, the launcher's
+  shape). None of their art is used; the launcher's art and sounds are drawn
+  and synthesized by its own code.
+- [Plume](https://github.com/renderbag/plume) (rendering),
+  [SDL](https://www.libsdl.org) (Linux and Android), [Dear ImGui](https://github.com/ocornut/imgui)
+  (launcher), [DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler)
+  (through [dxc-bin](https://github.com/renderbag/dxc-bin)),
+  [MoltenVK](https://github.com/KhronosGroup/MoltenVK) (Vulkan on macOS and iOS).
+- [Xenia](https://github.com/xenia-project/xenia): reference for the Xbox 360
+  kernel's behaviour and GPU texture formats/layouts.
+- [Xenia Canary's netplay build](https://github.com/AdrianCassar/xenia-canary)
+  (`netplay_canary_experimental`, BSD licence): reference for the Xbox LIVE
+  structures and message numbers online play answers. None of its code is used.
+- [ONNX Runtime](https://github.com/microsoft/onnxruntime) (camera pose inference),
+  [OpenCV Zoo](https://github.com/opencv/opencv_zoo) and
+  [MediaPipe](https://github.com/google-ai-edge/mediapipe) (person detection and
+  3D pose models). Dependency versions and licences: [THIRD_PARTY.md](THIRD_PARTY.md).
+- [No Kinect Patch](https://gamebanana.com/mods/456720) by Rei-SanTH (tested
+  by SmileyWorld, MagicShad and ivaschia): its reverse-engineering notes showed
+  where the game reads the Kinect's voice commands and hand cursor, which
+  guided the Kinect emulation here. The patch is licensed CC BY-NC-ND 4.0;
+  none of its code or files are used or included.
+
+### Contributors
+
+- [knuckleslee](https://github.com/knuckleslee): code and research — D3D12 on Windows 10 ([#14](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/14)), the Avatar's body
+  type ([#15](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/15)), playing with a real Kinect ([#21](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/21)), the benchmark workflow ([#51](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/51)), the pause gestures, steadier menus, window statistics, adjustment windows and save folder ([#99](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/99)–[#104](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/104)), ultrawide screens with an edge-anchored HUD ([#113](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/pull/113), [#114](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/pull/114)), the Kinect v2 depth stream and preview ([#231](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/pull/231)), the ultrawide menu ring ([#230](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/pull/230)), Kinect v1 and v2 recordings that the Mac's Kinect skeleton was tuned against ([#342](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/pull/342)), and detailed
+  performance measurements on a 4-core PC that led to faster races ([#33](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/33), [#52](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/52), [#62](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/62), [#65](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/65)).
+- [Saiyokage](https://github.com/Saiyokage): long test sessions on Android, a check of every course's gear sections ([#212](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/212)), and the clips that led to the Fly board fix ([#153](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/issues/153)).
+- Players who reported problems, sent logs and crash dumps, and tested fixes: [18Spiderman15](https://github.com/18Spiderman15), [1nhp](https://github.com/1nhp), [Anim233](https://github.com/Anim233), [ArtisIan97](https://github.com/ArtisIan97), [CODEX0827](https://github.com/CODEX0827), [Crappy-Productions](https://github.com/Crappy-Productions), [Dann93-spec](https://github.com/Dann93-spec), [dareon88](https://github.com/dareon88), [Didgo1](https://github.com/Didgo1), [Diego-Yoshi](https://github.com/Diego-Yoshi), [DrYaikin](https://github.com/DrYaikin), [francisc0frank0](https://github.com/francisc0frank0), [guranu](https://github.com/guranu), [HazeX2](https://github.com/HazeX2), [Holikdev](https://github.com/Holikdev), [Infeernuss](https://github.com/Infeernuss), [ITSeniy](https://github.com/ITSeniy), [Janybrito](https://github.com/Janybrito), [Jdxgo8](https://github.com/Jdxgo8), [JKBowdenOfficial](https://github.com/JKBowdenOfficial), [Joka2010](https://github.com/Joka2010), [JolTH-dot](https://github.com/JolTH-dot), [Kaue-123](https://github.com/Kaue-123), [KillerBunny12](https://github.com/KillerBunny12), [KnivesDevilish](https://github.com/KnivesDevilish), [Koyurofox](https://github.com/Koyurofox), [larilalima](https://github.com/larilalima), [Larry654](https://github.com/Larry654), [MegaCrashFan](https://github.com/MegaCrashFan), [Minuteworld94](https://github.com/Minuteworld94), [mymes1](https://github.com/mymes1), [Mysterion2006](https://github.com/Mysterion2006), [NeoCharmy](https://github.com/NeoCharmy), [neurocontrarian](https://github.com/neurocontrarian), [Saiyokage](https://github.com/Saiyokage), [shiny-ribbon](https://github.com/shiny-ribbon), [shireon12](https://github.com/shireon12), [shmoops69](https://github.com/shmoops69), [tameradel578-cmyk](https://github.com/tameradel578-cmyk), [ThatTwig98](https://github.com/ThatTwig98).
+
+Thank you all. Every report with a `game.log` or a dump made a fix possible.
+
+This project was developed with the help of AI models: GPT-6, Claude
+Opus 5 and Claude Opus 5.5.
+
+Licences and exact revisions: [THIRD_PARTY.md](THIRD_PARTY.md),
+[config/dependencies.lock.json](config/dependencies.lock.json).
+
+*Sonic Free Riders* is © SEGA. This project is not affiliated with or
+endorsed by SEGA or Microsoft.
+
+## License
+
+The project's code is licensed under the GNU General Public License v3.0 or
+later ([COPYING](COPYING)). The game's own code and data remain SEGA's and are
+not covered by that grant.

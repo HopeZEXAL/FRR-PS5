@@ -21,6 +21,7 @@ enum Id {
     skip_logos,        // SFR_SKIP_LOGOS
     // Gameplay
     cpu_difficulty,    // SFR_CPU_DIFFICULTY
+    skip_warmup,       // SFR_SKIP_RACE_WARMUP: no "On your Gear!" ride before a race (pads)
     // Super Sonic (the Chaos Emeralds gear; off online)
     chaos_types,       // SFR_MOD_CHAOS_TYPES: Sonic speed only, Super Sonic all three
     chaos_transform,   // SFR_MOD_CHAOS_TRANSFORM_RINGS: rings to turn Super (30 = the game's)

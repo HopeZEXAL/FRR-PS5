@@ -1,3 +1,4 @@
+#include "game_settings.h"
 #include "ppc_recomp_shared.h"
 #include "diagnostic_hooks.h"
 #include "guest_memory.h"
@@ -1201,6 +1202,20 @@ SFR_INPUT_HOOK(sub_822B72E0) {
     __imp__sub_822B72E0(ctx, base);
     if (!pad_racing()) return;
     const uint32_t state = memory().load<uint32_t>(race + 2408);
+    // The settings page's "skip race warm-up" (game_settings.h): with pads
+    // only, the whole preparation (the ride after Omochao through the cones)
+    // is left out, from waiting for the sensor straight to racing.
+    // NUI_RACE_PREPARATION lines name each state it passes.
+    static uint32_t last_state = ~0u;
+    if (state != last_state) {
+        std::cerr << "NUI_RACE_PREPARATION state=" << state << '\n';
+        last_state = state;
+    }
+    if (sfr::game_settings::value(sfr::game_settings::skip_warmup) && state >= 1 && state <= 7) {
+        memory().store<uint32_t>(race + 2408, 8);
+        std::cerr << "NUI_RACE_PREPARATION skipped_to_race from=" << state << '\n';
+        return;
+    }
     if (state >= 2 && state <= 6) {
         memory().store<uint32_t>(race + 2408, 7);
         std::cerr << "NUI_RACE_PREPARATION skipped=" << state << '\n';

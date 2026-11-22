@@ -1,0 +1,152 @@
+From 8636eb071a9188386fa1dc232b820a096ef3d559 Mon Sep 17 00:00:00 2001
+From: FRR PS5 port <frr-ps5@localhost>
+Date: Thu, 19 Nov 2026 21:16:47 -0600
+Subject: [PATCH] PS5: present to the display through VK_KHR_display; Vulkan
+ from the linked RADV
+
+A PS5 title has no windows and no Vulkan loader. RenderWindow names the
+display mode (width, height; 0 and 0 pick 1920x1080), the instance asks for
+VK_KHR_display instead of a window system's surface extension, the swap chain
+presents to plane 0 of the first display in that mode and takes its size from
+it, and when the app has not supplied one, the instance's
+vkGetInstanceProcAddr is the linked driver's vk_icdGetInstanceProcAddr.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01PsoqM6HdQvvTPyYm6EkSav
+---
+ plume_render_interface_types.h | 13 +++++++
+ plume_vulkan.cpp               | 66 ++++++++++++++++++++++++++++++++++
+ 2 files changed, 79 insertions(+)
+
+diff --git a/plume_render_interface_types.h b/plume_render_interface_types.h
+index 0888f6f..3e2bbd5 100644
+--- a/plume_render_interface_types.h
++++ b/plume_render_interface_types.h
+@@ -39,6 +39,19 @@ namespace plume {
+     typedef HWND RenderWindow;
+ #elif defined(__ANDROID__)
+     typedef ANativeWindow* RenderWindow;
++#elif defined(__PROSPERO__)
++    // The PlayStation 5 has no windows: a swap chain presents to the display
++    // through VK_KHR_display (VideoOut). width and height pick its mode (0
++    // and 0: 1920x1080, else the first); the swap chain writes back the
++    // mode it chose.
++    struct RenderWindow {
++        uint32_t width = 0;
++        uint32_t height = 0;
++        bool operator==(const struct RenderWindow& rhs) const {
++            return width == rhs.width && height == rhs.height;
++        }
++        bool operator!=(const struct RenderWindow& rhs) const { return !(*this == rhs); }
++    };
+ #elif defined(SDL_VULKAN_ENABLED)
+     typedef SDL_Window *RenderWindow;
+ #elif defined(__linux__)
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index 1a25745..3e3d734 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -61,6 +61,10 @@ namespace plume {
+         return bufferDeviceAddressName;
+     }
+ 
++#if defined(__PROSPERO__)
++    extern "C" VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char *name);
++#endif
++
+     // Backend constants.
+ 
+     // Required buffer alignment for acceleration structures.
+@@ -89,6 +93,8 @@ namespace plume {
+         VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
+ #   elif defined(__APPLE__)
+         VK_EXT_METAL_SURFACE_EXTENSION_NAME,
++#   elif defined(__PROSPERO__)
++        VK_KHR_DISPLAY_EXTENSION_NAME,
+ #   endif
+         // With SDL on Linux the surface extension is the one SDL names for
+         // the window (VulkanInterface's constructor): VK_KHR_wayland_surface
+@@ -2186,6 +2192,56 @@ namespace plume {
+             fprintf(stderr, "vkCreateMetalSurfaceEXT failed with error code 0x%X.\n", res);
+             return;
+         }
++#   elif defined(__PROSPERO__)
++        // VideoOut, through VK_KHR_display: the first display, plane 0, in the
++        // mode the window asks for (1920x1080 when it asks for none).
++        VulkanInterface *renderInterface = commandQueue->device->renderInterface;
++        VkPhysicalDevice displayDevice = commandQueue->device->physicalDevice;
++        uint32_t displayCount = 1;
++        VkDisplayPropertiesKHR displayProperties = {};
++        res = vkGetPhysicalDeviceDisplayPropertiesKHR(displayDevice, &displayCount, &displayProperties);
++        if (((res != VK_SUCCESS) && (res != VK_INCOMPLETE)) || (displayCount == 0)) {
++            fprintf(stderr, "vkGetPhysicalDeviceDisplayPropertiesKHR found no display (0x%X).\n", res);
++            return;
++        }
++
++        uint32_t modeCount = 0;
++        vkGetDisplayModePropertiesKHR(displayDevice, displayProperties.display, &modeCount, nullptr);
++        std::vector<VkDisplayModePropertiesKHR> modes(modeCount);
++        vkGetDisplayModePropertiesKHR(displayDevice, displayProperties.display, &modeCount, modes.data());
++        if (modes.empty()) {
++            fprintf(stderr, "The display reports no modes.\n");
++            return;
++        }
++
++        const uint32_t wantWidth = (renderWindow.width != 0) ? renderWindow.width : 1920;
++        const uint32_t wantHeight = (renderWindow.height != 0) ? renderWindow.height : 1080;
++        const VkDisplayModePropertiesKHR *mode = &modes[0];
++        for (const VkDisplayModePropertiesKHR &candidate : modes) {
++            const VkExtent2D &extent = candidate.parameters.visibleRegion;
++            if ((extent.width == wantWidth) && (extent.height == wantHeight)) {
++                mode = &candidate;
++                break;
++            }
++        }
++
++        VkDisplaySurfaceCreateInfoKHR surfaceCreateInfo = {};
++        surfaceCreateInfo.sType = VK_STRUCTURE_TYPE_DISPLAY_SURFACE_CREATE_INFO_KHR;
++        surfaceCreateInfo.displayMode = mode->displayMode;
++        surfaceCreateInfo.planeIndex = 0;
++        surfaceCreateInfo.transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
++        surfaceCreateInfo.globalAlpha = 1.0f;
++        surfaceCreateInfo.alphaMode = VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR;
++        surfaceCreateInfo.imageExtent = mode->parameters.visibleRegion;
++        res = vkCreateDisplayPlaneSurfaceKHR(renderInterface->instance, &surfaceCreateInfo, nullptr, &surface);
++        if (res != VK_SUCCESS) {
++            fprintf(stderr, "vkCreateDisplayPlaneSurfaceKHR failed with error code 0x%X.\n", res);
++            return;
++        }
++
++        // The swap chain's size is the mode's: there is no window to ask.
++        this->renderWindow.width = mode->parameters.visibleRegion.width;
++        this->renderWindow.height = mode->parameters.visibleRegion.height;
+ #   endif
+ 
+         VkBool32 presentSupported = false;
+@@ -2522,6 +2578,9 @@ namespace plume {
+         windowWrapper->getWindowAttributes(&attributes);
+         dstWidth = attributes.width;
+         dstHeight = attributes.height;
++#   elif defined(__PROSPERO__)
++        dstWidth = renderWindow.width;
++        dstHeight = renderWindow.height;
+ #   endif
+     }
+ 
+@@ -4683,6 +4742,13 @@ namespace plume {
+     VulkanInterface::VulkanInterface() {
+ #endif
+         VkResult res = VK_SUCCESS;
++#   if defined(__PROSPERO__)
++        // A PS5 title has no Vulkan loader: RADV is linked in, and its ICD
++        // entry point is the instance's vkGetInstanceProcAddr.
++        if (getInstanceProcAddr == nullptr) {
++            getInstanceProcAddr = vk_icdGetInstanceProcAddr;
++        }
++#   endif
+         if (getInstanceProcAddr != nullptr) {
+             volkInitializeCustom(getInstanceProcAddr);
+         }
+-- 
+2.43.0
+

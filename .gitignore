@@ -29,3 +29,10 @@ __pycache__/
 /game/
 /settings.ini
 *.log
+
+# PS5 build outputs
+ps5/title/obj/
+ps5/title/inst-obj/
+ps5/title/gen-obj/
+ps5/title/title/
+ps5/title/logs/

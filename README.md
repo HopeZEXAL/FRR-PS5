@@ -1,3 +1,10 @@
+> [!NOTE]
+> **This fork adds a PlayStation 5 port** (a homebrew title for jailbroken
+> consoles). Everything else is [Free Riders Recompiled](https://github.com/YuutaTsubasa/Free-Riders-Recompiled)
+> by YuutaTsubasa. The PS5 build, its builder and how to use them:
+> [ps5/README.md](ps5/README.md); downloads are on this fork's Releases page.
+> Please report PS5 problems here, not to the original project.
+
 # Free Riders Recompiled
 
 [繁體中文](README.zh-TW.md)

@@ -1,0 +1,38 @@
+diff --git a/src/joystick/ps5/SDL_ps5joystick.c b/src/joystick/ps5/SDL_ps5joystick.c
+index 4cf0a15..e8c758d 100644
+--- a/src/joystick/ps5/SDL_ps5joystick.c
++++ b/src/joystick/ps5/SDL_ps5joystick.c
+@@ -287,6 +287,25 @@ static void PS5_JoystickUpdate(SDL_Joystick *joystick)
+         SDL_PrivateJoystickHat(joystick, 0, hat);
+     }
+ 
++    /* Touchpad: up to two fingers, positions 0..1 across the pad (the
++       DualSense reports 0..1919 by 0..1079). A finger is matched by slot. */
++    {
++        int f;
++        for (f = 0; f < 2; ++f) {
++            const int down = f < pad.touch.fingers;
++            const int was = f < ctx->pad.touch.fingers;
++            if (!down && !was) continue;
++            if (down) {
++                float x = pad.touch.touch[f].x / 1919.0f, y = pad.touch.touch[f].y / 1079.0f;
++                if (x > 1.0f) x = 1.0f;
++                if (y > 1.0f) y = 1.0f;
++                SDL_PrivateJoystickTouchpad(joystick, 0, f, SDL_PRESSED, x, y, 1.0f);
++            } else {
++                SDL_PrivateJoystickTouchpad(joystick, 0, f, SDL_RELEASED, 0.0f, 0.0f, 0.0f);
++            }
++        }
++    }
++
+     SDL_memcpy(&ctx->pad, &pad, sizeof(pad));
+ }
+ 
+@@ -369,6 +388,7 @@ static int PS5_JoystickOpen(SDL_Joystick *joystick, int device_index)
+     joystick->naxes = 6;
+     joystick->nhats = 1;
+     joystick->instance_id = ctx->instance_id;
++    SDL_PrivateJoystickAddTouchpad(joystick, 2);
+ 
+     return 0;
+ }

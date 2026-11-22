@@ -1,0 +1,68 @@
+Credits and licences
+====================
+
+Free Riders Recompiled for PS5 is a port of another project to the PS5. Most
+of the work behind it is theirs. Each licence's full text is in licenses/.
+
+Free Riders Recompiled
+----------------------
+The game this port runs. Free Riders Recompiled is by YuutaTsubasa (悠太翼):
+  https://github.com/YuutaTsubasa/Free-Riders-Recompiled
+with code and research by knuckleslee, testing by Saiyokage, and the many
+players credited in its README for their reports and logs.
+GNU GPL v3 (licenses/GPL-3.0.txt). This port is GPL v3 too.
+
+Free Riders Recompiled credits, and builds on:
+  XenonRecomp and XenosRecomp (hedge-dev and contributors; XenosRecomp as
+    pinned by sonicnext-dev): the PowerPC and shader recompilers. MIT.
+  Unleashed Recompiled (hedge-dev) and Marathon Recompiled (sonicnext-dev):
+    the recompilation ports it learned from.
+  Xenia (the Xenia project): reference for the Xbox 360's behaviour.
+  No Kinect Patch by Rei-SanTH: reference for the Kinect emulation (none of
+    its code is used).
+
+The PS5 side
+------------
+PS5_Vulkan by Mihawk-99, built on ps5-native-app-boilerplate by
+  BlackBearReloaded: RADV (Mesa's Vulkan driver) for the PS5, the title
+  converter and signer, and the generated libc.prx. GNU GPL v3.
+  https://github.com/mihawk-99/PS5_Vulkan
+PS5_Mesa by Mihawk-99, on Mesa (Mesa contributors, freedesktop.org, with
+  AMD's AddrLib): the graphics driver. MIT and others (licenses/Mesa/).
+PS5_PayloadSDK by Mihawk-99, on the ps5-payload-dev SDK by John Törnblom
+  (with Aleksei Kulaev): the PS5 toolchain, headers and platform layer.
+  GNU GPL v3.
+SDL 2 (Sam Lantinga and contributors), with its PS5 port by John Törnblom
+  (ps5-payload-dev): controller and audio. zlib licence (licenses/SDL2.txt).
+
+Libraries in the game
+---------------------
+Plume (renderbag and contributors) ........ MIT    licenses/Plume.txt
+Vulkan Memory Allocator (AMD) ............. MIT    licenses/VulkanMemoryAllocator.txt
+volk (Arseny Kapoulkine) .................. MIT    licenses/volk.txt
+Dear ImGui (Omar Cornut) .................. MIT    licenses/imgui.txt
+SIMDe (Evan Nemerson and contributors) .... MIT    licenses/simde.txt
+{fmt} (Victor Zverovich) .................. MIT    licenses/fmt.txt
+xxHash (Yann Collet) ...................... BSD 2-Clause  licenses/xxHash.txt
+libmspack (Stuart Caie) ................... LGPL v2.1     licenses/libmspack-LGPL-2.1.txt
+tiny-AES-c (kokke) ........................ Unlicense     licenses/tiny-AES-c.txt
+TinySHA1 (Saurav Mohapatra) ............... ISC-style     licenses/TinySHA1.txt
+o1heap (Pavel Kirienko) ................... MIT    (in Free Riders Recompiled)
+DejaVu fonts (DejaVu authors, Bitstream Vera) ............ fonts/LICENSE
+
+The builder (Windows) also uses
+-------------------------------
+LLVM / Clang (the LLVM project) ........... Apache 2.0 with LLVM exception
+Python (Python Software Foundation) ....... PSF licence
+DirectX Shader Compiler (Microsoft), as packaged by renderbag/dxc-bin:
+  University of Illinois/NCSA licence
+llvm-mingw (Martin Storsjö): the toolchain the builder's programs are made with
+
+The PS5 port
+------------
+Ported to the PS5 by <your name here>, with the help of Claude (Anthropic).
+The icon and background art are original to this port.
+
+Sonic Free Riders, Sonic the Hedgehog and related names are trademarks of
+SEGA. This project is not affiliated with or endorsed by SEGA, Sony or
+Microsoft, and includes none of the game's code or data.

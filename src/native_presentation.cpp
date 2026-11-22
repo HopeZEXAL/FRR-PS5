@@ -1,6 +1,8 @@
 #include "avatar_transform.h"
+#include "avatar_notice.h"
 #include "native_presentation.h"
 #include "render_scale.h"
+#include "window_resize.h"
 #include "consecutive_failures.h"
 #include <functional>
 
@@ -11,6 +13,7 @@
 #include "native_raster_state.h"
 #include "native_depth_flip.h"
 #include "gltf_model.h"
+#include "plain_race_loading.h"
 #include "touch_controls.h"
 #include "fps_readout.h"
 #include "screen_overlay_renderer.h"
@@ -118,6 +121,13 @@ void set_fullscreen(HWND window, bool fullscreen) {
 // Asks the window's own thread to destroy it (DestroyWindow works only there).
 constexpr UINT destroy_window_message = WM_APP + 1;
 constexpr UINT_PTR close_timer = 1;
+// SFR_TEST_WINDOW_RESIZE (window_resize.h), done on the window's own thread:
+// full screen on (wparam 1) or off, and a client area of wparam x lparam.
+constexpr UINT test_fullscreen_message = WM_APP + 2;
+constexpr UINT test_size_message = WM_APP + 3;
+// The player is dragging the window's edge (or moving it): a new render size
+// waits for the drag to end (window_resize::Settle). One game window a process.
+std::atomic<bool> window_sizing{false};
 
 LRESULT CALLBACK presentation_window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     if (message == destroy_window_message) {
@@ -130,6 +140,20 @@ LRESULT CALLBACK presentation_window_proc(HWND window, UINT message, WPARAM wpar
         return 0;
     }
     if (message == WM_SYSCHAR && wparam == VK_RETURN) return 0;  // no beep for Alt+Enter
+    if (message == WM_ENTERSIZEMOVE) window_sizing.store(true, std::memory_order_relaxed);
+    if (message == WM_EXITSIZEMOVE) window_sizing.store(false, std::memory_order_relaxed);
+    if (message == test_fullscreen_message) {
+        set_fullscreen(window, wparam != 0);
+        return 0;
+    }
+    if (message == test_size_message) {
+        RECT bounds{0, 0, LONG(wparam), LONG(lparam)};
+        AdjustWindowRectExForDpi(&bounds, DWORD(GetWindowLongW(window, GWL_STYLE)), FALSE,
+                                 DWORD(GetWindowLongW(window, GWL_EXSTYLE)), GetDpiForWindow(window));
+        SetWindowPos(window, nullptr, 0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
+        return 0;
+    }
     // The mouse moved over the game is the Kinect hand cursor (Issue #217).
     if (message == WM_MOUSEMOVE) {
         RECT client{};
@@ -518,6 +542,15 @@ struct NativePresentation::Impl {
     std::shared_ptr<std::string> model_error;
     std::chrono::steady_clock::time_point model_started;
     std::atomic<uint32_t> model_overlay{~0u};
+    // A local Avatar drawn with no model to draw (avatar_notice.h): written
+    // as the Avatar is drawn, read as the frame is presented.
+    sfr::AvatarNotice avatar_notice;
+    std::mutex avatar_notice_lock;
+    void avatar_drawn_bare(sfr::AvatarNotice::Reason reason) {
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::lock_guard lock(avatar_notice_lock);
+        avatar_notice.drawn(now, reason);
+    }
     void build_model();
     void draw_model(const AvatarFrameTransform& frame);
     // The last blit's viewport (x, y, width, height) and window size, for touches.
@@ -585,8 +618,29 @@ struct NativePresentation::Impl {
     std::unique_ptr<sfr::ScreenOverlayRenderer> overlay_renderer;
     std::pair<uint32_t, uint32_t> presented_area{0, 0};
     float presented_aspect = 0.0f;
+    std::atomic<bool> corner_anchor{false};  // set_corner_anchor
     void build_blit();
     void build_blit_targets();
+    // The framebuffer's colour and depth textures and their framebuffer, at
+    // render_width x render_height.
+    void make_targets();
+    // The render size follows a resized window (Issue #365): SFR_RENDER_SIZE
+    // is the launcher's Render Size (window_resize.h); without it the render
+    // size stays what SFR_RENDER_SCALE made it. render_percent is the scale
+    // the targets have now.
+    std::optional<uint32_t> render_size;
+    uint32_t render_percent = 0;
+    sfr::window_resize::Settle settle;
+    // Run before the targets are made again, once nothing in flight uses
+    // them: the renderer lets go of what samples the old ones.
+    std::function<void()> before_rescale;
+    void follow_window(uint32_t out_width, uint32_t out_height);
+    void rescale(uint32_t percent);
+    // SFR_TEST_WINDOW_RESIZE: the window changed at given presents.
+    std::vector<sfr::window_resize::ScriptStep> resize_script;
+    size_t resize_step = 0;
+    uint64_t present_count = 0;
+    void run_resize_script();
 
     ~Impl() {
         try { drain(); } catch (...) {}
@@ -1750,47 +1804,152 @@ NativePresentation::NativePresentation(NativeGraphics& graphics, uint32_t width,
 #endif
 
     step("targets");
-    implementation->color = graphics.device().createTexture(
-        plume::RenderTextureDesc::ColorTarget(implementation->render_width, implementation->render_height, plume::RenderFormat::B8G8R8A8_UNORM));
-    implementation->depth = graphics.device().createTexture(
-        plume::RenderTextureDesc::DepthTarget(implementation->render_width, implementation->render_height, graphics.depth_format()));
-    if (!implementation->color) unavailable("color texture");
-    if (!implementation->depth) unavailable("depth texture");
-#ifdef _WIN32
-    if (d3d12 && (!static_cast<plume::D3D12Texture*>(implementation->color.get())->d3d ||
-                  !static_cast<plume::D3D12Texture*>(implementation->depth.get())->d3d))
-        unavailable("D3D12 color or depth texture");
-#endif
-
-    const plume::RenderTexture* color_attachment = implementation->color.get();
-    plume::RenderFramebufferDesc framebuffer_desc(&color_attachment, 1, implementation->depth.get());
+    implementation->make_targets();
     step("framebuffer");
-    implementation->framebuffer = graphics.device().createFramebuffer(framebuffer_desc);
     implementation->command_list = graphics.queue().createCommandList();
     implementation->fence = graphics.device().createCommandFence();
     implementation->spare_list = graphics.queue().createCommandList();
     implementation->spare_fence = graphics.device().createCommandFence();
     if (!implementation->spare_list || !implementation->spare_fence) unavailable("spare command list");
-    if (!implementation->framebuffer) unavailable("framebuffer");
-    if (implementation->framebuffer->getWidth() != implementation->render_width || implementation->framebuffer->getHeight() != implementation->render_height)
-        unavailable("framebuffer");
     if (!implementation->command_list) unavailable("command list");
     if (!implementation->fence) unavailable("command fence");
 #ifdef _WIN32
     if (d3d12) {
-        const auto* native_framebuffer = static_cast<plume::D3D12Framebuffer*>(implementation->framebuffer.get());
-        if (native_framebuffer->colorHandles.size() != 1 || !native_framebuffer->colorHandles[0].ptr ||
-            !native_framebuffer->depthHandle.ptr)
-            unavailable("D3D12 framebuffer");
         const auto* native_commands = static_cast<plume::D3D12CommandList*>(implementation->command_list.get());
         if (!native_commands->d3d || !native_commands->commandAllocator) unavailable("command list");
         const auto* native_fence = static_cast<plume::D3D12CommandFence*>(implementation->fence.get());
         if (!native_fence->d3d || !native_fence->fenceEvent) unavailable("command fence");
     }
 #endif
+    // The render size follows the window from here on (window_resize.h).
+    implementation->render_percent = percent;
+    implementation->render_size = sfr::window_resize::parse_render_size(std::getenv("SFR_RENDER_SIZE"));
+    implementation->settle = sfr::window_resize::Settle(implementation->swap_chain->getWidth(),
+                                                        implementation->swap_chain->getHeight());
+    if (implementation->render_size)
+        std::cerr << "NATIVE_RENDER_SIZE follows_window=1 render_size=" << *implementation->render_size << '\n';
+    if (const char* script = std::getenv("SFR_TEST_WINDOW_RESIZE"); script && *script) {
+        implementation->resize_script = sfr::window_resize::parse_script(script);
+        std::cerr << "NATIVE_TEST_WINDOW_RESIZE steps=" << implementation->resize_script.size() << '\n';
+    }
     step("ready");
     implementation->ready = true;
     impl_ = std::move(implementation);
+}
+
+void NativePresentation::Impl::make_targets() {
+    auto& device = graphics->device();
+    color = device.createTexture(plume::RenderTextureDesc::ColorTarget(render_width, render_height, plume::RenderFormat::B8G8R8A8_UNORM));
+    depth = device.createTexture(plume::RenderTextureDesc::DepthTarget(render_width, render_height, graphics->depth_format()));
+    if (!color) unavailable("color texture");
+    if (!depth) unavailable("depth texture");
+#ifdef _WIN32
+    const bool d3d12 = graphics->backend() == GraphicsBackend::d3d12;
+    if (d3d12 && (!static_cast<plume::D3D12Texture*>(color.get())->d3d || !static_cast<plume::D3D12Texture*>(depth.get())->d3d))
+        unavailable("D3D12 color or depth texture");
+#endif
+    const plume::RenderTexture* color_attachment = color.get();
+    framebuffer = device.createFramebuffer(plume::RenderFramebufferDesc(&color_attachment, 1, depth.get()));
+    if (!framebuffer) unavailable("framebuffer");
+    if (framebuffer->getWidth() != render_width || framebuffer->getHeight() != render_height) unavailable("framebuffer");
+#ifdef _WIN32
+    if (d3d12) {
+        const auto* native_framebuffer = static_cast<plume::D3D12Framebuffer*>(framebuffer.get());
+        if (native_framebuffer->colorHandles.size() != 1 || !native_framebuffer->colorHandles[0].ptr ||
+            !native_framebuffer->depthHandle.ptr)
+            unavailable("D3D12 framebuffer");
+    }
+#endif
+}
+
+void NativePresentation::Impl::run_resize_script() {
+    const uint64_t present = ++present_count;
+    while (resize_step < resize_script.size() && resize_script[resize_step].present <= present) {
+        const auto& step = resize_script[resize_step++];
+        using Action = sfr::window_resize::ScriptStep::Action;
+        std::cerr << "NATIVE_TEST_WINDOW_RESIZE present=" << present << " step=" << resize_step << ' ';
+        switch (step.action) {
+        case Action::size: std::cerr << step.width << 'x' << step.height; break;
+        case Action::minimize: std::cerr << "min"; break;
+        case Action::restore: std::cerr << "restore"; break;
+        case Action::fullscreen: std::cerr << "full"; break;
+        case Action::windowed: std::cerr << "window"; break;
+        }
+        std::cerr << '\n';
+#ifdef _WIN32
+        // Asked of the window's own thread, without making it the active window.
+        switch (step.action) {
+        case Action::size: PostMessageW(window, test_size_message, WPARAM(step.width), LPARAM(step.height)); break;
+        case Action::minimize: ShowWindowAsync(window, SW_SHOWMINNOACTIVE); break;
+        case Action::restore: ShowWindowAsync(window, SW_SHOWNOACTIVATE); break;
+        case Action::fullscreen: PostMessageW(window, test_fullscreen_message, 1, 0); break;
+        case Action::windowed: PostMessageW(window, test_fullscreen_message, 0, 0); break;
+        }
+#else
+        switch (step.action) {
+        case Action::size: SDL_SetWindowSize(window, int(step.width), int(step.height)); break;
+        case Action::minimize: SDL_MinimizeWindow(window); break;
+        case Action::restore: SDL_RestoreWindow(window); break;
+        case Action::fullscreen: set_fullscreen(window, true); break;
+        case Action::windowed: set_fullscreen(window, false); break;
+        }
+#endif
+    }
+}
+
+void NativePresentation::Impl::follow_window(uint32_t out_width, uint32_t out_height) {
+    if (!render_size) return;
+#ifdef _WIN32
+    const bool dragging = window_sizing.load(std::memory_order_relaxed);
+#else
+    const bool dragging = false;
+#endif
+    const auto size = settle.update(out_width, out_height, dragging, sfr::window_resize::Settle::clock::now());
+    if (!size) return;
+    const uint32_t percent = sfr::window_resize::percent_for(size->second, *render_size, width, height);
+    std::cerr << "NATIVE_RENDER_SIZE window=" << size->first << 'x' << size->second << " percent=" << percent
+              << " was=" << render_percent << '\n';
+    if (percent != render_percent) rescale(percent);
+}
+
+// The framebuffer and every render surface made again at another scale, at
+// the end of a present: everything recorded so far has been submitted, and is
+// waited for here, so nothing in flight still uses the old targets. The
+// title's next draws make its surfaces again, at the new scale, as it names
+// them (set_target); they start cleared, as after a start.
+void NativePresentation::Impl::rescale(uint32_t percent) {
+    const auto started = std::chrono::steady_clock::now();
+    flush();
+    graphics->wait_idle();
+    // The renderer copies out what is still resolved from the surfaces (its
+    // copies are recorded against the framebuffer, as between draws) and
+    // lets go of its views of them; whatever it recorded is waited for too.
+    target = nullptr;
+    if (before_rescale) before_rescale();
+    flush();
+    graphics->wait_idle();
+    bound = nullptr;
+    deferred_clear.reset();
+    surfaces.clear();
+    blit_view.reset();
+    framebuffer.reset();
+    depth.reset();
+    color.reset();
+    const uint32_t old_width = render_width, old_height = render_height;
+    render_width = render_scale::scaled_extent(width, percent);
+    render_height = render_scale::scaled_extent(height, percent);
+    render_percent = percent;
+    make_targets();
+    if (blit_texture) {
+        blit_view = color->createTextureView(plume::RenderTextureViewDesc::Texture2D(plume::RenderFormat::B8G8R8A8_UNORM));
+        if (!blit_view) unavailable("blit view");
+        blit_texture->setTexture(0, color.get(), plume::RenderTextureLayout::SHADER_READ, blit_view.get());
+    }
+    ++list_generation;
+    std::cerr << "NATIVE_RENDER_SCALE rescaled percent=" << percent << " logical=" << width << 'x' << height
+              << " physical=" << render_width << 'x' << render_height << " was=" << old_width << 'x' << old_height
+              << " ms=" << std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count()
+              << '\n';
 }
 
 NativePresentation::~NativePresentation() = default;
@@ -1917,6 +2076,10 @@ void NativePresentation::after_flush(std::function<void(bool)> callback) {
 
 void NativePresentation::before_submit(std::function<void()> callback) {
     impl_->before_submit.push_back(std::move(callback));
+}
+
+void NativePresentation::set_before_rescale(std::function<void()> callback) {
+    impl_->before_rescale = std::move(callback);
 }
 
 void NativePresentation::clear_before_submit() { impl_->before_submit.clear(); }
@@ -2122,6 +2285,9 @@ std::pair<uint32_t, uint32_t> NativePresentation::target_size() const noexcept {
 }
 
 float NativePresentation::presented_aspect() const noexcept { return impl_->presented_aspect; }
+void NativePresentation::set_corner_anchor(bool anchored) noexcept {
+    impl_->corner_anchor.store(anchored, std::memory_order_relaxed);
+}
 
 std::pair<uint32_t, uint32_t> NativePresentation::presented_area() const noexcept {
     return impl_->presented_area.first ? impl_->presented_area : std::pair{impl_->width, impl_->height};
@@ -2325,12 +2491,19 @@ void NativePresentation::wait_for_player_model() {
 }
 
 void NativePresentation::draw_player_model(const AvatarFrameTransform& frame) {
-    if (!sfr::model_wanted()) return;
+    // No model chosen in the launcher: the Avatar races with nothing drawn
+    // for it, and the frame says why.
+    if (!sfr::model_wanted()) { impl_->avatar_drawn_bare(sfr::AvatarNotice::Reason::no_model); return; }
     for (const auto* matrix : {&frame.world, &frame.view, &frame.projection})
         for (float value : *matrix) if (!std::isfinite(value)) return;
     impl_->refuse_during_gpu_wait();
     impl_->build_model();
-    if (!impl_->model_pipeline) return;
+    if (!impl_->model_pipeline) {
+        // Still loading has its own line; a model that will never be drawn
+        // (unreadable, or its pipelines refused) says so.
+        if (impl_->model_tried) impl_->avatar_drawn_bare(sfr::AvatarNotice::Reason::model_failed);
+        return;
+    }
     impl_->emit_deferred_clear();
     impl_->drain();
     impl_->ensure_open();
@@ -2363,6 +2536,7 @@ std::pair<uint32_t, uint32_t> primary_display_size() {
 
 void NativePresentation::present(uint32_t area_width, uint32_t area_height, float display_aspect) {
     impl_->refuse_during_gpu_wait();
+    if (!impl_->resize_script.empty()) impl_->run_resize_script();
     impl_->emit_deferred_clear();
     impl_->drain();
 
@@ -2499,13 +2673,21 @@ void NativePresentation::present(uint32_t area_width, uint32_t area_height, floa
     // While the Avatar's model loads, the frame is drawn (not copied) so a
     // line can be written over it.
     const uint32_t model_loading = impl_->model_overlay.load(std::memory_order_relaxed);
+    // So is it while an Avatar races without a model (avatar_notice.h).
+    std::string model_line;
+    if (model_loading != ~0u) model_line = "LOADING AVATAR MODEL " + std::to_string(model_loading / 10) + "%";
+    else {
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        std::lock_guard lock(impl_->avatar_notice_lock);
+        model_line = impl_->avatar_notice.line(now);
+    }
     // The achievement notification or page (screen_overlay.h) is drawn too.
     const bool layers_shown = screen_layers_shown();
     // The button prompts under the game's pose figures (Issue #284,
     // control_prompts.h), drawn after the blit.
     const std::vector<prompts::Sighting> sightings = prompts::enabled() ? prompts::take_sightings() : std::vector<prompts::Sighting>{};
     const bool stretch = !can_copy || part || out_width != impl_->render_width || out_height != impl_->render_height ||
-                         pause > 0.0f || touch_shown || fps_shown || model_loading != ~0u || layers_shown || !sightings.empty();
+                         pause > 0.0f || touch_shown || fps_shown || !model_line.empty() || layers_shown || !sightings.empty();
     // The copy to the swap-chain texture follows the frame's draws in their
     // own list; pipelined, the frame is submitted without waiting for it.
     const bool pipelined = Impl::pipelined();
@@ -2531,19 +2713,15 @@ void NativePresentation::present(uint32_t area_width, uint32_t area_height, floa
         // so the 880x720 the loading screens set fills the same 16:9 area the
         // rest of the game does. Keeping its own shape made the loading
         // screens narrower than the game, very visibly so on a 20:9 phone.
-        const float scale = (std::min)(float(out_width) / float(impl_->width),
-                                       float(out_height) / float(impl_->height));
-        float view_width = float(impl_->width) * scale, view_height = float(impl_->height) * scale;
-        if (part && display_aspect > 0.0f) {
-            // The part keeps the size it has inside the whole framebuffer as that
-            // is scaled into the window (the same as frames presented whole, so a
-            // window of another shape than the framebuffer does not make it jump),
-            // never more than the window holds.
-            view_height = (std::min)(view_height, float(out_width) / display_aspect);
-            view_width = view_height * display_aspect;
-        }
-        const plume::RenderViewport viewport((float(out_width) - view_width) * 0.5f, (float(out_height) - view_height) * 0.5f,
-                                             view_width, view_height);
+        // The part keeps the size it has inside the whole framebuffer as that
+        // is scaled into the window (the same as frames presented whole, so a
+        // window of another shape than the framebuffer does not make it jump),
+        // never more than the window holds (plain_race_loading.h).
+        const auto shown_view = plain_loading::present_view(out_width, out_height, impl_->width, impl_->height, part,
+                                                            display_aspect,
+                                                            impl_->corner_anchor.load(std::memory_order_relaxed));
+        const float view_width = shown_view.width, view_height = shown_view.height;
+        const plume::RenderViewport viewport(shown_view.x, shown_view.y, view_width, view_height);
         const plume::RenderRect scissor(0, 0, int32_t(out_width), int32_t(out_height));
         impl_->command_list->setViewports(&viewport, 1);
         impl_->command_list->setScissors(&scissor, 1);
@@ -2559,11 +2737,20 @@ void NativePresentation::present(uint32_t area_width, uint32_t area_height, floa
         const float area[2] = {float(shown.right) / float(impl_->render_width),
                                float(shown.bottom) / float(impl_->render_height)};
         std::memcpy(constants.data(), area, sizeof area);
+        // The controls keep their shape in an image of any aspect (Issue #443,
+        // touch_controls.h): the touch reader lays them out for this viewport.
+        const float image_aspect = touch_image_aspect(viewport.width, viewport.height);
+#ifdef _WIN32
+        // No touch reader here: SFR_TOUCH_CONTROLS=1 shows them at rest.
+        TouchOverlay overlay = touch_shown ? touch_overlay_at_rest(image_aspect) : TouchOverlay{};
+#else
         TouchOverlay overlay = touch_shown ? touch_overlay() : TouchOverlay{};
+#endif
         overlay.readout = fps_readout_word(fps_shown, impl_->fps.value(), fps_overlay_inset()) |
                           (touch_names_shown() ? 0u : touch_names_hidden_bit);
         // START's circle becomes the gauge: state 3 plus how far.
-        if (pause > 0.0f) overlay.circle[TouchControls::start] = {0.075f, 0.86f, 0.05f, 3.0f + (std::min)(pause, 1.0f)};
+        if (pause > 0.0f) overlay.circle[TouchControls::start] = {touch_anchor_x(0.075f, image_aspect), 0.86f, 0.05f,
+                                                               3.0f + (std::min)(pause, 1.0f)};
         const auto touch_words = pack_touch_overlay(overlay);
         std::copy(touch_words.begin(), touch_words.end(), constants.begin() + 2);
         impl_->touch_view = {viewport.x, viewport.y, viewport.width, viewport.height, float(out_width), float(out_height)};
@@ -2612,10 +2799,11 @@ void NativePresentation::present(uint32_t area_width, uint32_t area_height, floa
                 impl_->overlay_renderer->draw(*impl_->command_list, layers, viewport.x, viewport.y, view_width, view_height,
                                               float(out_width), float(out_height));
         }
-        if (model_loading != ~0u) {
+        if (!model_line.empty()) {
             // "LOADING AVATAR MODEL 45%" in the frame's lower left corner, on a
-            // dark band, so a model that takes seconds does not look like a hang.
-            const std::string line = "LOADING AVATAR MODEL " + std::to_string(model_loading / 10) + "%";
+            // dark band, so a model that takes seconds does not look like a hang;
+            // or why an Avatar races with nothing drawn for it.
+            const std::string& line = model_line;
             const int px = (std::max)(2, int(view_height / 180.0f));
             const int x = int(viewport.x) + 4 * px, y = int(viewport.y + view_height) - 13 * px;
             const int w = int(out_width), h = int(out_height);
@@ -2669,6 +2857,8 @@ void NativePresentation::present(uint32_t area_width, uint32_t area_height, floa
         impl_->suboptimal_kept = false;
     }
     if (!impl_->shown) impl_->show_window();
+    // A window of another size settled: the frame's targets follow it.
+    impl_->follow_window(out_width, out_height);
 }
 
 void NativePresentation::Impl::show_window() {
@@ -2786,6 +2976,8 @@ void NativePresentation::pump_events() {
     // following the scene (hidden in movies and story scenes, Issue #274).
     if (touch_controls_enabled()) {
         static TouchControls resting;
+        resting.set_options(touch_options_chosen());
+        resting.set_layout(touch_layout_chosen());
         resting.update({}, 0.0f, touch_scene());
         publish_touch_controls(resting.state(), resting.overlay());
     }
@@ -2847,6 +3039,9 @@ void NativePresentation::Impl::read_touch_controls() {
     const auto [view_x, view_y, view_width, view_height, out_width, out_height] = touch_view;
     std::vector<TouchPoint> touches;
     if (view_width > 0.0f && view_height > 0.0f) {
+        touch_controls.set_aspect(touch_image_aspect(view_width, view_height));
+        touch_controls.set_options(touch_options_chosen());  // the player's hidden and unnamed controls
+        touch_controls.set_layout(touch_layout_chosen());    // and where they put each (Issue #443)
         for (int device = 0; device < SDL_GetNumTouchDevices(); ++device) {
             const SDL_TouchID id = SDL_GetTouchDevice(device);
             for (int index = 0; index < SDL_GetNumTouchFingers(id); ++index) {

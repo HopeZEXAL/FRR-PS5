@@ -1,5 +1,7 @@
 #pragma once
 #include "kinect_ideal_diagram.h"
+#include "touch_layout.h"
+#include "touch_options.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -38,8 +40,9 @@ struct LauncherSettings {
     // Neither changes the selected output resolution. Alignment affects the
     // race HUD in Auto and is ignored with 16:9.
 #ifdef __ANDROID__
-    // A phone is about 20:9: Auto would draw a quarter more and stretch the
-    // touch controls, so phones keep the original picture unless asked.
+    // A phone is about 20:9: Auto would draw a quarter more, so phones keep
+    // the original picture unless asked. (The touch controls keep their
+    // shape in Auto too, Issue #443; they were stretched before.)
     std::string aspect_ratio = "16:9";
 #else
     std::string aspect_ratio = "auto";  // "auto" or "16:9"
@@ -63,6 +66,9 @@ struct LauncherSettings {
     // "newbie", "easy", "normal" (the original) or "hard" (cpu_difficulty.h,
     // Issue #420).
     std::string cpu_difficulty = "normal";
+    // SFR_PLAIN_RACE_LOADING: the loading screen before a race is black with
+    // only "Now Loading" in its corner, without Omochao's practice (Issue #365).
+    bool plain_race_loading = false;
     bool vertex_cache = true;        // SFR_VERTEX_CACHE
     bool gpu_pipeline = true;        // SFR_GPU_PIPELINE
     uint32_t race_render_every = 1;  // SFR_RENDER_EVERY
@@ -85,10 +91,32 @@ struct LauncherSettings {
     uint32_t fps_inset = 0;
 #endif
     bool ui_sounds = true;           // the launcher's own sounds
+    // Linux: the launcher keeps an entry for itself in the desktop's
+    // application menu (linux_desktop_entry.h, Issue #365); off removes it.
+    bool application_menu = true;
+    // The launcher asks GitHub at most once an hour whether a newer release
+    // is out and then shows "Version X is available" (update_check.h, Issue #365). Off
+    // asks nothing. The last answer is kept here (not settings the player
+    // chooses): when it was asked (Unix seconds), the newest version and the
+    // address of its file for this platform.
+    bool check_updates = true;
+    int64_t update_checked_at = 0;
+    std::string update_version, update_url;
     bool vulkan = true;             // legacy settings key; selects Vulkan or D3D12
     bool d3d11 = false;             // Direct3D 11 (experimental, Windows, Issue #359), over `vulkan`
     bool touch_controls = true;      // SFR_TOUCH_CONTROLS (Android, iOS)
     bool touch_labels = true;        // SFR_TOUCH_LABELS: the buttons' names on them (Issue #236)
+    // Issue #443 (touch_options.h): the touch controls that are hidden, and
+    // those drawn without their names, as masks of TouchControls' circles;
+    // in settings.ini and to the game (SFR_TOUCH_HIDDEN, SFR_TOUCH_UNNAMED)
+    // as lists of names, "ls,lt". None by default: every control shown and
+    // named. touch_labels off still hides every name.
+    uint32_t touch_hidden = 0, touch_unnamed = 0;
+    // Issue #443 (touch_layout.h): where the player put each touch control
+    // and how big it is, from the layout editor; in settings.ini and to the
+    // game (SFR_TOUCH_LAYOUT) as "ls:l0.320,0.550,1.40;...". Empty is the
+    // default layout.
+    TouchLayout touch_layout{};
     bool tilt = true;                // SFR_TILT: tilt to steer (Android, iOS)
     bool tilt_lean = false;          // SFR_TILT_LEAN: "Tilt to kick", a forward tip kicks (Android, iOS; Issue #247; key kept from "Tilt to lean")
     // Where the Kinect player's body comes from, and whether the camera

@@ -10,7 +10,8 @@
 //
 // Each button carries its name (Issue #236, touch_labels.hlsli): letters in
 // a light shade of its colour with a dark edge, readable over any picture.
-// Bit 17 of the readout's word (below) hides them, and LB's and RB's arrows.
+// Bit 17 of the readout's word (below) hides them, and LB's and RB's arrows;
+// a negative state (-1 shown, -2 pressed) hides one circle's (Issue #443).
 //
 // The constants are 32 words, the 128 bytes of push constants every Vulkan
 // device has: the sampled area as two floats, then pairs of half floats
@@ -93,11 +94,14 @@ float figure(float2 p, float edge) {
     return (1.0 - smoothstep(-edge, edge, d)) * inside;
 }
 
+// The image's own width / height: image coordinates span the viewport, so a
+// pixel's steps give it. A circle stays round in an image of any shape
+// (Issue #443: Aspect Ratio Auto on a 20:9 phone stretched 16:9's).
+float2 image_heights(float2 pixel) { return float2(pixel.y / pixel.x, 1.0); }
+
 // The Pause Gesture's gauge at c (x, y, radius, 3 + progress).
 float3 gauge(float3 color, float2 image, float4 c, float2 pixel) {
-    // The image's own width / height (a frame wider than 16:9 keeps the gauge
-    // round): image coordinates span the frame, so a pixel's steps give it.
-    const float2 d = (image - c.xy) * float2(pixel.y / pixel.x, 1.0);
+    const float2 d = (image - c.xy) * image_heights(pixel);
     const float r = length(d);
     const float edge = pixel.y;
     const float disc_alpha = 1.0 - smoothstep(c.z - edge, c.z + edge, r);
@@ -114,7 +118,7 @@ float3 gauge(float3 color, float2 image, float4 c, float2 pixel) {
 
 // A soft disc with a brighter rim; alpha 0 outside.
 float disc(float2 image, float2 centre, float radius, float2 pixel) {
-    const float d = length((image - centre) * float2(16.0 / 9.0, 1.0)) - radius;
+    const float d = length((image - centre) * image_heights(pixel)) - radius;
     return 1.0 - smoothstep(-pixel.y, pixel.y, d);
 }
 
@@ -165,8 +169,10 @@ float4 pixelMain(Vertex vertex) : SV_Target {
     const uint readout_word = g_Circles[6].w;
     const bool names = (readout_word & 0x20000) == 0;
     [unroll] for (int i = 0; i < CIRCLES; ++i) {
-        const float4 c = circle_at(i);
-        if (c.w <= 0.0) continue;
+        float4 c = circle_at(i);
+        if (c.w == 0.0) continue;
+        const bool named = names && c.w > 0.0;
+        c.w = abs(c.w);
         if (c.w >= 3.0) {
             color.rgb = gauge(color.rgb, vertex.image, c, pixel);
             continue;
@@ -181,10 +187,10 @@ float4 pixelMain(Vertex vertex) : SV_Target {
             const float shown = disc(vertex.image, knob, c.z * 0.45, pixel);
             color.rgb = lerp(color.rgb, float3(1.0, 1.0, 1.0), shown * (pressed ? 0.6 : 0.3));
         }
-        if (!names) continue;
+        if (!named) continue;
         // The name, on the knob for a stick; p in the circle's radii.
         const float2 centre = label_on_knob(i) ? unpack_halves(i == 0 ? g_Knobs.x : g_Knobs.y) : c.xy;
-        const float2 p = (vertex.image - centre) * float2(16.0 / 9.0, 1.0) / c.z;
+        const float2 p = (vertex.image - centre) * image_heights(pixel) / c.z;
         if (dot(p, p) > 1.0) continue;  // nothing more to draw out here
         const float edge = pixel.y / c.z;
         if (i == 7 || i == 8) {  // LB, RB: which side the punch goes, under the name

@@ -135,6 +135,7 @@ LauncherSettings parse_launcher_settings(const std::string& text) {
             sfr::cpu_difficulty::Level level = sfr::cpu_difficulty::Level::normal;
             if (sfr::cpu_difficulty::parse(value, level)) settings.cpu_difficulty = sfr::cpu_difficulty::name(level);
         }
+        else if (key == "plain_race_loading") read_flag(value, settings.plain_race_loading);
         else if (key == "vertex_cache") read_flag(value, settings.vertex_cache);
         else if (key == "gpu_pipeline") read_flag(value, settings.gpu_pipeline);
         else if (key == "race_render_every") read_number(value, 1, 4, settings.race_render_every);
@@ -145,10 +146,22 @@ LauncherSettings parse_launcher_settings(const std::string& text) {
         else if (key == "achievement_notifications") read_flag(value, settings.achievement_notifications);
         else if (key == "fps_inset") read_number(value, 0, 20, settings.fps_inset);
         else if (key == "ui_sounds") read_flag(value, settings.ui_sounds);
+        else if (key == "application_menu") read_flag(value, settings.application_menu);
+        else if (key == "check_updates") read_flag(value, settings.check_updates);
+        else if (key == "update_checked_at") {
+            int64_t seconds = 0;
+            const auto [end, error] = std::from_chars(value.data(), value.data() + value.size(), seconds);
+            if (error == std::errc() && end == value.data() + value.size() && seconds >= 0) settings.update_checked_at = seconds;
+        }
+        else if (key == "update_version") settings.update_version = value;
+        else if (key == "update_url") settings.update_url = value;
         else if (key == "vulkan") read_flag(value, settings.vulkan);
         else if (key == "d3d11") read_flag(value, settings.d3d11);
         else if (key == "touch_controls") read_flag(value, settings.touch_controls);
         else if (key == "touch_labels") read_flag(value, settings.touch_labels);
+        else if (key == "touch_hidden") settings.touch_hidden = touch_options::parse(value);
+        else if (key == "touch_unnamed") settings.touch_unnamed = touch_options::parse(value);
+        else if (key == "touch_layout") settings.touch_layout = touch_layout::parse(value);
         else if (key == "tilt") read_flag(value, settings.tilt);
         else if (key == "tilt_lean") read_flag(value, settings.tilt_lean);
         // "picture" is no longer offered: it reads as the default, off.
@@ -242,6 +255,7 @@ std::string format_launcher_settings(const LauncherSettings& s) {
         << "super_sonic_stay_on_board=" << s.super_sonic_stay_on_board << '\n'
         << "super_sonic_all_types=" << s.super_sonic_all_types << '\n'
         << "cpu_difficulty=" << s.cpu_difficulty << '\n'
+        << "plain_race_loading=" << s.plain_race_loading << '\n'
         << "vertex_cache=" << s.vertex_cache << '\n'
         << "gpu_pipeline=" << s.gpu_pipeline << '\n'
         << "race_render_every=" << s.race_render_every << '\n'
@@ -251,10 +265,18 @@ std::string format_launcher_settings(const LauncherSettings& s) {
         << "achievement_notifications=" << s.achievement_notifications << '\n'
         << "fps_inset=" << s.fps_inset << '\n'
         << "ui_sounds=" << s.ui_sounds << '\n'
+        << "application_menu=" << s.application_menu << '\n'
+        << "check_updates=" << s.check_updates << '\n'
+        << "update_checked_at=" << s.update_checked_at << '\n'
+        << "update_version=" << s.update_version << '\n'
+        << "update_url=" << s.update_url << '\n'
         << "vulkan=" << s.vulkan << '\n'
         << "d3d11=" << s.d3d11 << '\n'
         << "touch_controls=" << s.touch_controls << '\n'
         << "touch_labels=" << s.touch_labels << '\n'
+        << "touch_hidden=" << touch_options::format(s.touch_hidden) << '\n'
+        << "touch_unnamed=" << touch_options::format(s.touch_unnamed) << '\n'
+        << "touch_layout=" << touch_layout::format(s.touch_layout) << '\n'
         << "tilt=" << s.tilt << '\n'
         << "tilt_lean=" << s.tilt_lean << '\n'
         << "camera=" << s.camera << '\n'
@@ -432,11 +454,20 @@ std::vector<std::pair<std::string, std::string>> game_environment(const Launcher
         {"SFR_SUPER_SONIC_STAY_ON_BOARD", s.super_sonic_stay_on_board ? "1" : "0"},
         {"SFR_SUPER_SONIC_ALL_TYPES", s.super_sonic_stay_on_board && s.super_sonic_all_types ? "1" : "0"},
         {"SFR_CPU_DIFFICULTY", s.cpu_difficulty},
+        {"SFR_PLAIN_RACE_LOADING", s.plain_race_loading ? "1" : ""},
         {"SFR_WINDOW_WIDTH", std::to_string(window_width)},
         {"SFR_WINDOW_HEIGHT", std::to_string(window_height)},
         // The resolution scale of the output height, as the game's percent
         // of its 720 lines (always set: an inherited value is overridden).
         {"SFR_RENDER_SCALE", std::to_string(internal.requested_percent)},
+#if defined(__ANDROID__) || defined(SFR_IOS)
+        {"SFR_RENDER_SIZE", ""},  // a phone's frame does not follow a window
+#else
+        // The Render Size itself (0 Original, or a percent of the output's
+        // height), so that the game's render size follows a resized window
+        // (Issue #365): SFR_RENDER_SCALE is only where it starts.
+        {"SFR_RENDER_SIZE", std::to_string(validated_resolution_scale(s.resolution_scale))},
+#endif
         {"SFR_ASPECT_MODE", original ? "original" : "auto"},
         // Clear any inherited fixed ratio; Auto follows the window or display.
         {"SFR_ASPECT_RATIO", ""},
@@ -516,6 +547,11 @@ std::vector<std::pair<std::string, std::string>> game_environment(const Launcher
 #if defined(__ANDROID__) || defined(SFR_IOS)
         {"SFR_TOUCH_CONTROLS", s.touch_controls ? "1" : "0"},
         {"SFR_TOUCH_LABELS", s.touch_labels ? "1" : "0"},
+        // Empty (every control shown and named) removes the variables.
+        {"SFR_TOUCH_HIDDEN", touch_options::format(s.touch_hidden)},
+        {"SFR_TOUCH_UNNAMED", touch_options::format(s.touch_unnamed)},
+        // Empty (the default layout) too.
+        {"SFR_TOUCH_LAYOUT", touch_layout::format(s.touch_layout)},
         {"SFR_TILT", s.tilt ? "1" : "0"},
         {"SFR_TILT_LEAN", s.tilt_lean ? "1" : "0"},
 #endif
@@ -687,10 +723,9 @@ InternalResolution internal_resolution(const LauncherSettings& s, uint32_t resol
     // percent of 720 = output_height * (scale / 100) / 720 * 100; Original
     // is 100 whatever the output.
     const uint32_t chosen = validated_resolution_scale(resolution_scale);
-    const uint64_t scaled = uint64_t(r.output_height) * chosen;
-    r.requested_percent = chosen ? uint32_t(std::clamp<uint64_t>((scaled + logical_height / 2) / logical_height,
-                                                                 render_scale::min_percent, render_scale::max_percent))
-                                 : render_scale::default_percent;
+    // (render_scale::percent_of_output, which the game also follows a resized
+    // window with).
+    r.requested_percent = render_scale::percent_of_output(r.output_height, chosen, logical_height);
     // The logical frame is the title's 1280x720, widened in Auto for an
     // output wider than 16:9 as the game widens it (aspect_settings.cpp).
     r.logical_width = logical_width;

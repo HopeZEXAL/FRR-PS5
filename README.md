@@ -326,6 +326,16 @@ with [docs/progress.md](docs/progress.md).
   Story scenes now skip only while you hold START (or keep a finger on the screen on Android) until the circle fills, so a tap or an accidental touch no longer skips them. Movies need START, A, B or Back held for half a second. The startup logos still skip with a press (#426).
 - [v0.10.68 — Dolphin Resort water ski above 60 Hz](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.68)
   With **Test options › Gameplay › Race step rate** above 60 (for example 120 or 144), the racer no longer turns round and rides backwards behind the boat on the Dolphin Resort water ski, so the camera no longer looks at the racer's face and swings low beside them. At the default 60 Hz nothing changes (#410).
+- [v0.10.70 — Update notice, and the Linux application menu](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.70)
+  The launcher now tells you when a newer version is out, and its button opens the right download for your device in the browser. It checks at most once a day, sends no personal data, and can be turned off under **General › Updates**. On Linux the launcher also adds itself to your desktop's application menu; turn that off under **General › Desktop** (#365).
+- [v0.10.71 — Plain race loading screen, and the picture follows a resized window](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.71)
+  A new option, **General › Gameplay › Plain race loading screen** (off by default), shows a black screen with only Now Loading in the corner instead of the Omochao practice before a race; the race starts as usual. When you resize the game window, the picture is now redrawn at the new size once you stop resizing, instead of being stretched. A change of window shape (for example to ultrawide) still needs a restart to change the aspect ratio (#365).
+- [v0.10.72 — Round touch buttons on wide phones, and per-button touch options](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.72)
+  The touch buttons now stay round on wide phones with Aspect Ratio Auto, and on iPhones, instead of being stretched into ovals. A new page, **Controls › Touch and tilt › Customise touch buttons**, lets you hide any touch control, or only its name; for example, hide the left stick when you steer by tilting (#443).
+- [v0.10.73 — Plain race loading screen fixes on wide screens](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.73)
+  With **Plain race loading screen** on, wide screens (for example 20:9 phones with Aspect Ratio Auto) no longer show a half-window frame, with the touch buttons and frame-rate readout moved aside, after Now Loading goes. The hidden practice is now silent, and buttons pressed during the screen no longer change when the race starts (#365).
+- [v0.10.74 — Move and resize touch buttons](https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/tag/v0.10.74)
+  A new page, **Controls › Touch and tilt › Move and resize touch buttons**, lets you drag each touch button to a new place and change its size, or reset one or all of them. A layout made on one screen shape still fits a screen of another shape (#443).
 
 ## System Requirements
 
@@ -370,13 +380,43 @@ with [docs/progress.md](docs/progress.md).
    **Start game**. On iOS you can instead copy the `.iso` with the Files app
    to **On My iPhone › Free Riders**; the launcher finds it there.
 
+On Linux the launcher also adds **Free Riders Recompiled** to your desktop's
+application menu the first time it starts, so you can start it from there
+later: it writes `~/.local/share/applications/com.freeriders.recompiled.desktop`
+and its icon in `~/.local/share/icons/hicolor/256x256/apps/` (under
+`$XDG_DATA_HOME` when that is set). The entry starts the launcher from where
+it is; if you move the folder, the next start updates it. **General › Desktop ›
+Add to application menu** turned off removes both files. The launcher only
+ever changes files it wrote itself. Details are in [docs/linux.md](docs/linux.md).
+
+### Update notice
+
+At most once an hour the launcher asks GitHub whether a newer release is out.
+When there is one, a green **Version X is available** button appears at the top (and in
+**General › Updates**); it opens that release's file for your system in your
+browser: the Windows zip, the Linux tarball, the macOS zip, the iOS `.ipa`, or
+on Android the same APK you installed (`android10-arm64.apk` or the Android 9
+`android-arm64.apk`). Where a release has no file for your system it opens the
+release page. The launcher never downloads or installs anything itself.
+
+The request goes to `api.github.com` and carries nothing about you: no
+account, no cookies, only `FreeRidersRecompiled-launcher/<version>` as its
+User-Agent (GitHub sees your IP address, as with any visit). It runs in the
+background, gives up after a few seconds without a network and never delays
+**Start game**. The last answer is kept in `settings.ini` (`update_checked_at`,
+`update_version`, `update_url`), so the launcher asks at most once an hour.
+To turn it off, switch off **General › Updates › Check for updates**
+(`check_updates=0` in `settings.ini`). On Linux the request uses the system's
+libcurl (`libcurl.so.4`, installed on nearly every desktop); without it there
+is no check. Details are in [docs/update-notice.md](docs/update-notice.md).
+
 ## Settings
 
 The launcher groups settings by what you want to change:
 
 | Category | Settings |
 | --- | --- |
-| General | Launcher, game and voice languages, movies, restore defaults |
+| General | Launcher, game and voice languages, movies, update check, restore defaults |
 | Graphics | Display mode (Borderless or Windowed; Borderless by default), window size, aspect ratio and UI alignment, backend, Render Size, VSync, expandable performance options |
 | Sound | Game volume and launcher sounds |
 | Controls | Each player's input source and controller, button/key bindings, Android touch and tilt |
@@ -494,7 +534,16 @@ hand cursor: touch anywhere away from the buttons and the cursor goes there
 (rest on an item to choose it, as with a hand); on the title screen a touch is
 START. In movies and story scenes, touch and hold anywhere (or hold START) to
 skip: half a second for a movie, until the SKIP gauge fills in a story scene;
-a brief touch skips nothing. On a PC the mouse moves the hand cursor the same way. Details: [docs/race-controls.md](docs/race-controls.md),
+a brief touch skips nothing. Under Controls › Touch and tilt, **Customise touch
+buttons** hides any button you don't use (it then doesn't react: its spot is
+empty screen; with the stick hidden, tilting still steers) or only its name;
+**Button names** still turns every name off at once (#443). **Move and resize
+touch buttons**, below it, shows the game's screen with the buttons on it: drag
+a button to move it, touch it to choose it and set its size (half to twice as
+big, never smaller than START), or reset one or all. Each button keeps its
+distance from the nearer side (or from the middle), so a layout also fits a
+screen of another shape; the stick's area in races follows the stick to its
+side. On a PC the mouse moves the hand cursor the same way. Details: [docs/race-controls.md](docs/race-controls.md),
 [docs/pad-menus.md](docs/pad-menus.md).
 
 The **achievements page** lists all 50 achievements in the game with their
@@ -608,6 +657,10 @@ selects AVATAR, with separate poses for each player. Ordinary characters are
 unchanged. The model appears in Loading and races, follows the game's main
 body animation, jumps and stance changes, and supplies hand positions for
 held items. Models are read locally; no avatar model is bundled or uploaded.
+
+AVATAR can be chosen without a model too: it races with its gear and board
+but no rider drawn, and **NO AVATAR MODEL. CHOOSE ONE IN THE LAUNCHER** is
+shown in the corner for the first seconds of Loading.
 
 This is experimental. A `.glb` without VRM humanoid bones stays static.
 Full MToon shading, transparent blending, spring bones, facial expressions

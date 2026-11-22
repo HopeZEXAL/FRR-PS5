@@ -1,5 +1,7 @@
 #pragma once
 #include "native_input.h"
+#include "touch_layout.h"
+#include "touch_options.h"
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -9,8 +11,16 @@ namespace sfr {
 // On-screen controls for touch screens (Android, iOS): a floating stick on the
 // left, A/B/X/Y, RT, a small right stick and the shoulder buttons around
 // the game's HUD, drawn over the game by the presentation blit. Coordinates
-// are relative to the game image (0..1 across its 16:9 area, y down); radii
-// are fractions of its height.
+// are relative to the game image (0..1 across it, y down); radii are
+// fractions of its height.
+//
+// The layout is drawn for a 16:9 image. An image of another shape (Aspect
+// Ratio Auto on a 20:9 phone fills the whole display, Issue #443) keeps every
+// control round and its size: each control keeps its distance, in image
+// heights, from the nearer side edge (touch_anchor_x), so the two thumbs'
+// groups stay at the sides and the extra width is in the middle. Before,
+// the 16:9 layout was stretched across the image: ovals about a fifth wider
+// on a 19.5:9 phone, and touches read the same stretched shapes.
 //
 //   stick   anywhere in the left 40% in a race, on its own circle elsewhere:
 //           the base appears under the finger and the knob follows it. In a
@@ -34,7 +44,16 @@ namespace sfr {
 //
 // In a race, tilting the device like a steering wheel also steers (left
 // stick X), and with "Tilt to kick" a quick tip of its top edge away from
-// the player is a kick dash (X; TiltKick below), stick held or not.
+// the player is a kick dash (X; TiltKick below), stick held or not. Tilt
+// steers whenever the stick is not held, so a player who only tilts can hide
+// the stick (TouchOptions).
+//
+// Each control can be hidden, and each can lose its name (Issue #443,
+// touch_options.h; set_options below). A hidden control is neither drawn nor
+// read: a touch where it was is a touch on empty screen. In a race that is
+// the floating stick on the left 40% (LB's and LT's places too, unless LS is
+// hidden as well) and nothing elsewhere; the hand cursor in the menus, START
+// on the title.
 //
 // Outside races the screen itself is the Kinect hand cursor (Issue #217): a
 // finger that lands away from the controls is the pointer, and the hand
@@ -42,6 +61,23 @@ namespace sfr {
 // circle). Selection stays the game's own: the cursor rests where the finger
 // left it and the item under it fills and is chosen, as with a hand. On the
 // title screen a touch away from the controls is START.
+//
+// The player may move and resize each control in the launcher's layout
+// editor (Issue #443, touch_layout.h; set_layout below). Everything follows
+// the placed circles: what is drawn, where a touch presses a button, the
+// sticks' travel (their radius) and, in a race, the floating stick's side:
+// the left 40% of the image while LS is on the left half (further in if LS
+// was put beyond it), the right 40% once LS is put on the right half. The
+// stick's resting circle is where LS was put. Overlapping controls are the
+// player's choice; a touch then goes, in this order, to:
+//   1. the buttons (A, B, X, Y, RT, START, LB, RB, LT): each whose circle or
+//      the slack just outside it the touch is in, as a thumb across two
+//      buttons of a pad (as before the editor); but a touch inside two or
+//      more circles, at least one of them moved or resized by the player,
+//      presses the one whose centre is nearest (in radii) alone;
+//   2. the right stick;
+//   3. the left stick (its circle in the menus, its side in a race);
+//   4. the pointer (the menus) or START (the title).
 //
 // A movie or a story scene (Issue #274) needs no controls and they hid the
 // picture, so none are drawn there: a touch anywhere is START for as long as
@@ -51,13 +87,24 @@ namespace sfr {
 // keeps them as in the menus.
 enum class TouchScene { menu, race, title, scene };
 
+// The width / height the layout below is drawn for.
+inline constexpr float touch_layout_aspect = 16.0f / 9.0f;
+// An x of the 16:9 layout in an image aspect times as wide as it is tall:
+// the same distance in image heights from the nearer side edge (the centre
+// stays the centre).
+float touch_anchor_x(float x, float aspect);
+// The image's aspect from its size on screen (the blit's viewport), 16:9 when
+// unknown.
+float touch_image_aspect(float width, float height);
+
 struct TouchPoint {
     int64_t id;
     float x, y;  // game-image coordinates; may lie outside 0..1 (black bars)
 };
 
 // What the blit draws: per circle (x, y, radius, state), state 0 hidden,
-// 1 shown, 2 pressed. The circles are TouchControls::Button's; knob and
+// 1 shown, 2 pressed; -1 and -2 the same without the control's name (and
+// without LB's and RB's arrows; Issue #443). The circles are TouchControls::Button's; knob and
 // right_knob are the knobs of the stick and the right stick.
 struct TouchOverlay {
     static constexpr size_t circles = 11;
@@ -94,10 +141,31 @@ public:
     // 0..1; none when no finger is the pointer.
     std::optional<std::array<float, 2>> pointer() const { return pointer_; }
     TouchOverlay overlay() const;
-    // Resting layout (circle centre and radius) of each control.
-    static std::array<float, 3> layout(Button button);
+    // The game image's width / height on screen (touch_image_aspect); the
+    // layout, the touches and the overlay follow it from the next update.
+    void set_aspect(float aspect) { aspect_ = aspect > 0.0f ? aspect : touch_layout_aspect; }
+    float aspect() const { return aspect_; }
+    // Which controls are hidden and which are drawn without their names
+    // (touch_options.h); all shown and named until set.
+    void set_options(const TouchOptions& options) { options_ = options; }
+    const TouchOptions& options() const { return options_; }
+    // Where the player put each control and how big it is (touch_layout.h);
+    // the default layout until set.
+    void set_layout(const TouchLayout& layout) { layout_ = layout; }
+    const TouchLayout& custom_layout() const { return layout_; }
+    // Default resting layout (circle centre and radius) of each control in an
+    // image of that aspect.
+    static std::array<float, 3> layout(Button button, float aspect = touch_layout_aspect);
+    // The resting layout in use: the player's places in this aspect.
+    std::array<float, 3> place(Button button) const { return touch_layout::resolve(button, layout_.places[button], aspect_); }
 
 private:
+    static std::array<float, 3> layout_16x9(Button button);
+    // Whether a touch at x is on the floating stick's side in a race.
+    bool in_race_stick_area(float x) const;
+    float aspect_ = touch_layout_aspect;
+    TouchOptions options_{};
+    TouchLayout layout_{};
     GamepadState state_{};
     bool stick_active_ = false;
     int64_t stick_finger_ = -1;
@@ -213,6 +281,9 @@ bool touch_in_scenes();
 void publish_touch_controls(const GamepadState& state, const TouchOverlay& overlay);
 GamepadState touch_gamepad();
 TouchOverlay touch_overlay();
+// The controls at rest in an image of that aspect (a desktop has no touch
+// reader: SFR_TOUCH_CONTROLS=1 shows them so).
+TouchOverlay touch_overlay_at_rest(float aspect);
 // Whether a race is running (the Kinect hooks know), for the stick's role.
 void set_touch_racing(bool racing);
 bool touch_racing();
@@ -239,4 +310,13 @@ bool touch_controls_active();
 // readout's word (fps_readout.h) has this bit set.
 constexpr uint32_t touch_names_hidden_bit = 1u << 17;
 bool touch_names_shown();
+
+// The player's choice of controls (touch_options.h): SFR_TOUCH_HIDDEN and
+// SFR_TOUCH_UNNAMED, lists of control names such as "ls,lt"; read once.
+// touch_options_from is that reading for given values (null for unset).
+TouchOptions touch_options_chosen();
+TouchOptions touch_options_from(const char* hidden, const char* unnamed);
+// The player's layout (touch_layout.h): SFR_TOUCH_LAYOUT, read once; the
+// default layout when unset or empty.
+TouchLayout touch_layout_chosen();
 }

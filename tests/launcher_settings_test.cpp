@@ -46,6 +46,11 @@ void settings_round_trip() {
     settings.gpu_pipeline = false;
     settings.race_render_every = 2;
     settings.ui_sounds = false;
+    settings.application_menu = false;
+    settings.check_updates = false;
+    settings.update_checked_at = 1790000000;
+    settings.update_version = "0.10.70";
+    settings.update_url = "https://github.com/YuutaTsubasa/Free-Riders-Recompiled/releases/download/v0.10.70/FreeRidersRecompiled-0.10.70-windows-x64.zip";
     settings.vulkan = true;
     settings.camera = "motion";
     settings.camera_device = "e2eSoft iVCam #2";
@@ -68,6 +73,15 @@ void settings_round_trip() {
     require(read.fullscreen && read.vsync && !read.audio && read.volume == 35, "display and sound survive a round trip");
     require(read.sharp_scaling && !sfr::LauncherSettings{}.sharp_scaling,
             "sharp scaling survives a round trip and is off by default");
+    require(!read.application_menu && sfr::LauncherSettings{}.application_menu &&
+                sfr::parse_launcher_settings("").application_menu,
+            "the application menu entry is on by default and its switch survives a round trip");
+    require(!read.check_updates && sfr::LauncherSettings{}.check_updates && sfr::parse_launcher_settings("").check_updates,
+            "checking for updates is on by default and its switch survives a round trip");
+    require(read.update_checked_at == 1790000000 && read.update_version == "0.10.70" && read.update_url == settings.update_url,
+            "the last update check's answer survives a round trip");
+    require(sfr::parse_launcher_settings("update_checked_at=-5\nupdate_checked_at=12x\n").update_checked_at == 0,
+            "an unreadable update check time is ignored");
     require(read.skip_movies && !read.vertex_cache && !read.gpu_pipeline && read.race_render_every == 2 && !read.ui_sounds && read.vulkan,
             "advanced settings survive a round trip");
     require(read.camera == "motion" && read.camera_device == "e2eSoft iVCam #2" && read.camera_mirror,
@@ -469,6 +483,15 @@ void title_stats_settings() {
     const auto unknown = sfr::parse_launcher_settings("cpu_difficulty=insane\n");
     require(unknown.cpu_difficulty == "normal" && value_of(unknown, "SFR_CPU_DIFFICULTY") == "normal",
             "an unknown CPU difficulty reads as Normal");
+    // Plain race loading screen (Issue #365): off by default, the original loading screen; on is saved and
+    // passed on, off exports the name with no value, which the game reads as off.
+    require(!defaults.plain_race_loading && value_of(defaults, "SFR_PLAIN_RACE_LOADING").empty() &&
+                sfr::format_launcher_settings(defaults).find("plain_race_loading=0\n") != std::string::npos,
+            "the race loading screen is the original by default");
+    const auto plain = sfr::parse_launcher_settings("plain_race_loading=1\n");
+    require(plain.plain_race_loading && value_of(plain, "SFR_PLAIN_RACE_LOADING") == "1" &&
+                sfr::format_launcher_settings(plain).find("plain_race_loading=1\n") != std::string::npos,
+            "a plain race loading screen is saved and the game is told");
 }
 
 void race_frameskip_settings() {
@@ -941,6 +964,47 @@ void environment_follows_settings() {
         require(!sfr::LauncherSettings{}.tilt_lean, "tilt to lean is off by default");
         require(!sfr::parse_launcher_settings("tilt=1\n").tilt_lean, "an older settings file leaves tilt to lean off");
         require(parsed.language == "zh-TW", "the launcher language survives a save");
+        // Issue #443: each touch control hidden or without its name, kept as
+        // lists of names; none by default, so an older file plays as before.
+        require(sfr::LauncherSettings{}.touch_hidden == 0 && sfr::LauncherSettings{}.touch_unnamed == 0 &&
+                    sfr::parse_launcher_settings("touch_labels=0\n").touch_hidden == 0,
+                "every touch control is shown and named by default");
+        sfr::LauncherSettings chosen;
+        chosen.touch_hidden = sfr::touch_options::parse("ls,lt");
+        chosen.touch_unnamed = sfr::touch_options::parse("a,start");
+        const std::string saved = sfr::format_launcher_settings(chosen);
+        require(saved.find("touch_hidden=ls,lt\n") != std::string::npos &&
+                    saved.find("touch_unnamed=a,start\n") != std::string::npos,
+                "the touch controls are saved as names");
+        const auto again = sfr::parse_launcher_settings(saved);
+        require(again.touch_hidden == chosen.touch_hidden && again.touch_unnamed == chosen.touch_unnamed,
+                "and survive a save");
+        require(sfr::parse_launcher_settings("touch_hidden=LS, rs ,nonsense\n").touch_hidden ==
+                    sfr::touch_options::parse("ls,rs"),
+                "a hand-edited list keeps the names it knows");
+        // Issue #443's layout editor: each moved or resized control, by name;
+        // none by default.
+        require(sfr::LauncherSettings{}.touch_layout.empty() &&
+                    sfr::format_launcher_settings(sfr::LauncherSettings{}).find("touch_layout=\n") != std::string::npos,
+                "the default layout saves an empty list");
+        sfr::LauncherSettings placed;
+        placed.touch_layout = sfr::touch_layout::parse("ls:l0.320,0.550,1.40;a:r0.276,0.820,0.80");
+        const std::string placed_saved = sfr::format_launcher_settings(placed);
+        require(placed_saved.find("touch_layout=ls:l0.320,0.550,1.40;a:r0.276,0.820,0.80\n") != std::string::npos,
+                "the layout is saved by name");
+        require(sfr::parse_launcher_settings(placed_saved).touch_layout == placed.touch_layout, "and survives a save");
+#if defined(__ANDROID__) || defined(SFR_IOS)
+        require(value_of(chosen, "SFR_TOUCH_HIDDEN") == "ls,lt" && value_of(chosen, "SFR_TOUCH_UNNAMED") == "a,start" &&
+                    value_of(sfr::LauncherSettings{}, "SFR_TOUCH_HIDDEN").empty(),
+                "the lists reach the game; none leaves the variables unset");
+        require(value_of(placed, "SFR_TOUCH_LAYOUT") == "ls:l0.320,0.550,1.40;a:r0.276,0.820,0.80" &&
+                    value_of(sfr::LauncherSettings{}, "SFR_TOUCH_LAYOUT").empty(),
+                "the layout reaches the game; the default leaves the variable unset");
+#else
+        require(!exports(chosen, "SFR_TOUCH_HIDDEN") && !exports(chosen, "SFR_TOUCH_UNNAMED") &&
+                    !exports(placed, "SFR_TOUCH_LAYOUT"),
+                "a desktop has no touch controls to choose");
+#endif
         require(sfr::parse_launcher_settings("language=klingon\n").language == "auto", "an unknown language is the system's");
     }
     {

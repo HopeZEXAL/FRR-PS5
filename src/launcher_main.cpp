@@ -49,6 +49,10 @@
 #include "test_options.h"
 #include "cpu_difficulty.h"
 #include "video_driver.h"
+#include "update_check.h"
+#if defined(__linux__) && !defined(__ANDROID__)
+#include "linux_desktop_entry.h"
+#endif
 #ifdef SFR_IOS
 #include "disc_image_search.h"
 #include "ios_screen.h"
@@ -161,6 +165,14 @@ enum Text {
     GestureMove, GestureController, GestureKeyboard, GestureTouch, GesturesOf,
     SectionGameplay, SuperSonicBoard, SuperSonicBoardHint, SuperSonicAllTypes, SuperSonicAllTypesHint,
     CpuDifficulty, CpuDifficultyHint, CpuNewbie, CpuEasy, CpuNormal, CpuHard,
+    PlainRaceLoading, PlainRaceLoadingHint,
+    SectionDesktop, AppMenuLabel, AppMenuHint,
+    SectionUpdates, CheckUpdatesLabel, CheckUpdatesHint, UpdateAvailable, UpdateDownload, UpdateNone,
+    SectionTouchButtons, TouchButtonsHint, TouchButtonColumn, TouchShownColumn, TouchNameColumn,
+    TouchRoleStick, TouchRoleRightStick, TouchRoleA, TouchRoleB, TouchRoleX, TouchRoleY,
+    TouchRoleLb, TouchRoleRb, TouchRoleLt, TouchRoleRt, TouchRoleStart,
+    SectionTouchLayout, TouchLayoutHint, TouchLayoutStickArea, TouchLayoutPick, TouchLayoutSize, TouchLayoutReset,
+    TouchLayoutResetAll,
     TextCount
 };
 
@@ -610,6 +622,52 @@ constexpr std::array<std::array<const char*, 2>, TextCount> texts{{
     {"Easy", "簡單"},
     {"Normal (original)", "普通（原版）"},
     {"Hard", "困難"},
+    {"Plain race loading screen", "簡化比賽前的載入畫面"},
+    {"The loading screen before each race shows only black and Now Loading in its corner, instead of Omochao and the practice of Kinect moves. The race starts as it would without it. Works with and without a Kinect or camera. Off, the game behaves as the original.",
+     "每場比賽前的載入畫面只顯示黑色背景與角落的 Now Loading，不再顯示 Omochao 與 Kinect 動作的練習。比賽照常開始。有沒有使用 Kinect 或攝影機都可以開啟。關閉時與原版相同。"},
+    {"Desktop", "桌面"},
+    {"Add to application menu", "加入應用程式選單"},
+    {"Lists Free Riders Recompiled in your desktop's application menu, starting this launcher from where it is now (~/.local/share/applications; it follows the folder if you move it). Off removes the entry.",
+     "把 Free Riders Recompiled 加入桌面環境的應用程式選單，從啟動器現在的位置啟動它（~/.local/share/applications；資料夾搬走後會跟著更新）。關閉會移除這個項目。"},
+    {"Updates", "更新"},
+    {"Check for updates", "檢查更新"},
+    {"At most once an hour the launcher asks GitHub whether a newer release is out (the request carries only the launcher's name and version). "
+     "If there is one, a button at the top opens its download for this device in your browser; nothing is downloaded or installed by itself.",
+     "啟動器每小時最多向 GitHub 查詢一次是否有新版本（請求只帶啟動器的名稱與版本）。有新版本時，上方會出現按鈕，"
+     "在瀏覽器開啟適合這台裝置的下載檔；不會自動下載或安裝任何東西。"},
+    {"Version %s is available", "版本 %s 已推出"},
+    {"Download", "下載"},
+    {"You have the newest version (%s).", "已是最新版本（%s）。"},
+    {"Customise touch buttons", "自訂觸控按鈕"},
+    {"Hide a button you do not use, or only its name. A hidden button does not react: touching where it was is touching empty screen. "
+     "With the stick hidden, tilting still steers. Button names off above hides every name.",
+     "隱藏用不到的按鈕，或只隱藏它的名稱。隱藏的按鈕不會反應，按在原本的位置就跟按在空白畫面一樣。"
+     "隱藏搖桿後仍可傾斜轉彎。上方的「按鈕名稱」關閉時，所有名稱都會隱藏。"},
+    {"Button", "按鈕"},
+    {"Shown", "顯示"},
+    {"Name", "名稱"},
+    {"Stick: steer, lean; menus: move", "搖桿：轉彎、傾身；選單：移動"},
+    {"Right stick: reach, raise hands", "右搖桿：伸手、舉起雙手"},
+    {"Jump (hold to crouch)", "跳躍（按住蹲下）"},
+    {"Brake, grab; menus: back", "煞車、抓住；選單：返回"},
+    {"Kick dash", "踢地加速"},
+    {"Stance", "切換站姿"},
+    {"Punch left (power skill)", "向左出招（Power Skill）"},
+    {"Punch right (power skill)", "向右出招（Power Skill）"},
+    {"Hold hands (Tag Race)", "牽手（Tag Race）"},
+    {"Use or shake an item", "使用或搖晃道具"},
+    {"Pause", "暫停"},
+    {"Move and resize touch buttons", "移動與縮放觸控按鈕"},
+    {"Drag a button to move it. Touch one to choose it, then change its size or reset it below. The picture has the game's "
+     "shape (Aspect Ratio); each button keeps its distance from the nearer side, so the layout also fits a screen of another "
+     "shape. Hidden buttons are left out.",
+     "拖曳按鈕即可移動。點一下選取按鈕後，可在下方調整大小或重設。預覽的形狀與遊戲畫面相同（畫面比例）；"
+     "每個按鈕會保持與較近一側的距離，換成其他形狀的螢幕也能用。隱藏的按鈕不會顯示在這裡。"},
+    {"Stick area in races", "比賽中的搖桿區"},
+    {"Touch a button to choose it.", "點一下按鈕即可選取。"},
+    {"%s size", "%s 大小"},
+    {"Reset this button", "重設這個按鈕"},
+    {"Reset all buttons", "全部重設"},
 }};
 
 int language = 0;
@@ -1714,6 +1772,20 @@ struct Launcher {
         sfr::LiveCheck result;  // written before done
     };
     std::shared_ptr<OnlineCheck> online_check;  // the one running, if any
+    // The update notice (update_check.h, Issue #365): this build's version
+    // (SFR_TEST_UPDATE_CURRENT_VERSION stands in for it in tests), and the
+    // hourly check, running on its own thread.
+    struct UpdateCheck {
+        std::atomic<bool> done{false};
+        sfr::update::CheckResult result;  // written before done
+    };
+    std::string current_version = [] {
+        const char* test = std::getenv("SFR_TEST_UPDATE_CURRENT_VERSION");
+        return std::string(test && *test ? test : sfr::update::build_version());
+    }();
+    std::shared_ptr<UpdateCheck> update_check;
+    bool update_check_started = false;
+    std::chrono::steady_clock::time_point update_due_looked = std::chrono::steady_clock::now();
     std::string online_checked;                 // the address it is for
     bool online_check_starts = false;           // Start waits for it
     std::string online_result;                  // what the last one found, shown under the address
@@ -1751,6 +1823,144 @@ struct Launcher {
         page = next;
         page_fade = 0.0f;
         focus_start = true;
+    }
+
+    // ------------------------------------------------ updates
+    // At most once an hour (the answer is kept in settings.ini), never in the
+    // way: the check runs on its own thread, times out in seconds and fails
+    // silently, and Start does not wait for it.
+    void start_update_check() {
+        update_check_started = true;
+        if (!settings.check_updates || current_version.empty()) {
+            std::fprintf(stderr, "LAUNCHER_UPDATE_CHECK skipped=%s current=%s\n", settings.check_updates ? "no_version" : "off",
+                         current_version.c_str());
+            return;
+        }
+        const int64_t now = int64_t(std::time(nullptr));
+        if (!sfr::update::check_due(settings.update_checked_at, now)) {
+            std::fprintf(stderr, "LAUNCHER_UPDATE_CHECK skipped=checked_recently current=%s latest=%s newer=%d\n", current_version.c_str(),
+                         settings.update_version.c_str(), int(update_available()));
+            return;
+        }
+        auto check = std::make_shared<UpdateCheck>();
+        update_check = check;
+        std::thread([check, version = current_version] {
+            check->result = sfr::update::run_check(sfr::launcher::fetch_https, version, sfr::update::this_platform());
+            check->done.store(true, std::memory_order_release);
+        }).detach();
+    }
+
+    void poll_update_check() {
+        if (!update_check_started) start_update_check();
+        // A launcher left open (or, on Android, come back from the game) asks
+        // again once the hour is over. Looked at once a minute, so at most a
+        // minute late.
+        const auto now = std::chrono::steady_clock::now();
+        if (!update_check && now - update_due_looked >= std::chrono::minutes(1)) {
+            update_due_looked = now;
+            if (settings.check_updates && !current_version.empty() &&
+                sfr::update::check_due(settings.update_checked_at, int64_t(std::time(nullptr))))
+                start_update_check();
+        }
+        if (!update_check || !update_check->done.load(std::memory_order_acquire)) return;
+        const sfr::update::CheckResult result = update_check->result;
+        update_check.reset();
+        // Asked now, whatever the answer: a failed check also waits for the
+        // next hour, so a launcher without a network never asks at every start.
+        settings.update_checked_at = int64_t(std::time(nullptr));
+        if (result.found) {
+            settings.update_version = result.found->version;
+            settings.update_url = result.found->url;
+        }
+        std::fprintf(stderr, "LAUNCHER_UPDATE_CHECK outcome=%s current=%s latest=%s newer=%d url=%s\n",
+                     sfr::update::outcome_name(result.outcome), current_version.c_str(), settings.update_version.c_str(),
+                     int(update_available()), settings.update_url.c_str());
+        sfr::save_launcher_settings(settings_file, settings);
+    }
+
+    // A newer release than this one is known (and the player wants to hear).
+    bool update_available() const {
+        return settings.check_updates && !settings.update_url.empty() &&
+               sfr::update::is_newer(settings.update_version, current_version);
+    }
+
+    void open_update() {
+        std::fprintf(stderr, "LAUNCHER_UPDATE_OPEN url=%s\n", settings.update_url.c_str());
+        sfr::launcher::open_url(settings.update_url.c_str());
+    }
+
+    std::string update_notice_text() const {
+        char text[160];
+        std::snprintf(text, sizeof text, tr(UpdateAvailable), settings.update_version.c_str());
+        return text;
+    }
+
+    // The top bar's notice, left of the language button: "Version X is
+    // available" with a download arrow, opening the file in the browser. The
+    // mouse's and touch's way, as the language button; keys and pads have
+    // the same button in General > Updates.
+    float update_button_width() const {
+        if (!update_available()) return 0.0f;
+        const std::string text = update_notice_text();
+        return fonts.tiny->CalcTextSizeA(fonts.tiny->FontSize, FLT_MAX, 0, text.c_str()).x + 56 * scale;
+    }
+
+    void update_button(ImVec2 size) {
+        const float width = update_button_width();
+        if (width <= 0) return;
+        const float shown = ease_out(appear);
+        const float height = 36 * scale;
+        const ImVec2 at(size.x - margin * scale - language_button_width() - 12 * scale - width + (1.0f - shown) * 60 * scale,
+                        top_bar * scale * shown - top_bar * scale + 24 * scale);
+        ImGui::SetCursorScreenPos(at);
+        ImGui::PushItemFlag(ImGuiItemFlags_NoNav, true);
+        const bool pressed = ImGui::InvisibleButton("##update-button", ImVec2(width, height));
+        ImGui::PopItemFlag();
+        const bool hovered = ImGui::IsItemHovered();
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        const ImVec2 end(at.x + width, at.y + height);
+        draw->AddRectFilled(at, end, hovered ? IM_COL32(40, 110, 90, 235) : IM_COL32(18, 70, 60, 210), height * 0.5f);
+        draw->AddRect(at, end, IM_COL32(110, 240, 170, hovered ? 240 : 150), height * 0.5f, 0, 1.5f * scale);
+        // A download arrow: a shaft, its head and the tray under it.
+        const ImU32 ink = IM_COL32(220, 255, 235, 245);
+        const float cx = at.x + height * 0.5f + 2 * scale, cy = at.y + height * 0.5f, r = height * 0.26f;
+        draw->AddLine(ImVec2(cx, cy - r), ImVec2(cx, cy + r * 0.45f), ink, 1.8f * scale);
+        draw->AddTriangleFilled(ImVec2(cx - r * 0.6f, cy), ImVec2(cx + r * 0.6f, cy), ImVec2(cx, cy + r * 0.7f), ink);
+        draw->AddLine(ImVec2(cx - r, cy + r), ImVec2(cx + r, cy + r), ink, 1.8f * scale);
+        const std::string text = update_notice_text();
+        const ImVec2 text_size = fonts.tiny->CalcTextSizeA(fonts.tiny->FontSize, FLT_MAX, 0, text.c_str());
+        draw->AddText(fonts.tiny, fonts.tiny->FontSize, ImVec2(cx + r + 12 * scale, at.y + (height - text_size.y) * 0.5f), ink, text.c_str());
+        if (pressed) {
+            ::play(sfr::UiSound::confirm);
+            open_update();
+        }
+    }
+
+    // General > Updates.
+    void update_settings() {
+        settings_section(SectionUpdates);
+        const float switch_width = ImGui::GetFrameHeight() * 1.9f;
+        setting_row(tr(CheckUpdatesLabel), tr(CheckUpdatesHint), switch_width, scale, [&] {
+            if (toggle("##check_updates", &settings.check_updates)) {
+                if (settings.check_updates && !update_check) start_update_check();
+                sfr::save_launcher_settings(settings_file, settings);
+            }
+        });
+        if (update_available()) {
+            const std::string text = update_notice_text();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextColored(ImVec4(0.45f, 0.90f, 0.55f, 1), "%s", text.c_str());
+            ImGui::SameLine();
+            if (small_button(tr(UpdateDownload), scale)) open_update();
+        } else if (settings.check_updates && !settings.update_version.empty() && !current_version.empty() &&
+                   !sfr::update::is_newer(settings.update_version, current_version)) {
+            char text[160];
+            std::snprintf(text, sizeof text, tr(UpdateNone), current_version.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
+            ImGui::TextUnformatted(text);
+            ImGui::PopStyleColor();
+        }
+        ImGui::Dummy(ImVec2(0, 4 * scale));
     }
 
     // ------------------------------------------------ online
@@ -2101,10 +2311,15 @@ struct Launcher {
         // The page's name on the right, breathing while installing.
         const float breath = breathing ? 0.55f + 0.45f * (0.5f + 0.5f * std::sin(t * 3.0f)) : 1.0f;
         const ImVec2 label_size = fonts.heading->CalcTextSizeA(fonts.heading->FontSize, FLT_MAX, 0, label);
-        draw->AddText(fonts.heading, fonts.heading->FontSize,
-                      ImVec2(size.x - margin * scale - right_reserved - (right_reserved > 0 ? 18 * scale : 0.0f) - label_size.x +
-                                 (1.0f - shown) * 60 * scale, title_y + 8 * scale),
-                      color(accent_bright, shown * breath), label);
+        const float label_x = size.x - margin * scale - right_reserved - (right_reserved > 0 ? 18 * scale : 0.0f) - label_size.x +
+                              (1.0f - shown) * 60 * scale;
+        // Left out where the buttons on the right (the update notice) would
+        // push it into the logo.
+        const float logo_end = title_x + logo_size.x + 12 * scale +
+                               fonts.tiny->CalcTextSizeA(fonts.tiny->FontSize, FLT_MAX, 0, "RECOMPILED").x + 18 * scale;
+        if (label_x >= logo_end)
+            draw->AddText(fonts.heading, fonts.heading->FontSize, ImVec2(label_x, title_y + 8 * scale),
+                          color(accent_bright, shown * breath), label);
         // Bottom bar.
         draw->AddRectFilledMultiColor(ImVec2(left, bottom), ImVec2(right, size.y + screen_bleed.w), IM_COL32(6, 16, 44, 225),
                                       IM_COL32(6, 16, 44, 225), IM_COL32(3, 8, 24, 240), IM_COL32(8, 6, 30, 240));
@@ -2563,6 +2778,8 @@ struct Launcher {
                 }
             });
         }
+        setting_row(tr(PlainRaceLoading), tr(PlainRaceLoadingHint), switch_width, scale,
+                    [&] { toggle("##plain_race_loading", &settings.plain_race_loading); });
         settings_section(SectionOnline);
         setting_row(tr(OnlineLabel), tr(OnlineHint), switch_width, scale, [&] { toggle("##online", &settings.online); });
         if (settings.online) {
@@ -2646,9 +2863,34 @@ struct Launcher {
                     settings.online_name = text;
             });
         }
+#if defined(__linux__) && !defined(__ANDROID__)
+        // The launcher's own application menu entry (Issue #365); not offered
+        // inside an AppImage, Flatpak or Snap, which have their own.
+        static const bool menu_offered = sfr::desktop_entry::available();
+        if (menu_offered) {
+            settings_section(SectionDesktop);
+            setting_row(tr(AppMenuLabel), tr(AppMenuHint), switch_width, scale, [&] {
+                if (toggle("##application_menu", &settings.application_menu)) {
+                    sync_application_menu();
+                    sfr::save_launcher_settings(settings_file, settings);
+                }
+            });
+        }
+#endif
+        update_settings();
         settings_section(SectionReset);
         reset_settings();
     }
+
+#if defined(__linux__) && !defined(__ANDROID__)
+    // Writes, updates or removes the application menu entry as the setting
+    // says (linux_desktop_entry.h): at start and when the switch changes.
+    void sync_application_menu() {
+        const auto result = sfr::desktop_entry::sync_launcher(settings.application_menu);
+        std::fprintf(stderr, "APPLICATION_MENU wanted=%d entry=%s icon=%s\n", int(settings.application_menu),
+                     sfr::desktop_entry::outcome_name(result.entry), sfr::desktop_entry::outcome_name(result.icon));
+    }
+#endif
 
     // ------------------------------------------------ controls
     // Two players' bindings; the four sets on the page are each player's
@@ -2809,6 +3051,227 @@ struct Launcher {
         ImGui::Dummy(ImVec2(0, 6 * scale));
     }
 
+    // Each touch control on its own (Issue #443, touch_options.h): shown or
+    // hidden, and with or without its name. Folded until opened, so the
+    // Touch section stays a few rows; one row a control, two switches.
+    bool touch_buttons_open = false;
+    void touch_button_list() {
+        collapsible_section(SectionTouchButtons, touch_buttons_open);
+        if (!touch_buttons_open) return;
+        ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
+        ImGui::PushTextWrapPos(content_width);
+        ImGui::TextUnformatted(wrapped(tr(TouchButtonsHint), room_to(content_width)).c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 4 * scale));
+        // The order a player reads the screen in: the sticks, the diamond,
+        // the shoulders and triggers, START. The index is the circle's
+        // (TouchControls::Button, touch_options::names).
+        struct Row { size_t circle; const char* name; Text role; };
+        static constexpr Row rows[] = {
+            {0, "LS", TouchRoleStick}, {10, "RS", TouchRoleRightStick}, {1, "A", TouchRoleA}, {2, "B", TouchRoleB},
+            {3, "X", TouchRoleX}, {4, "Y", TouchRoleY}, {7, "LB", TouchRoleLb}, {8, "RB", TouchRoleRb},
+            {9, "LT", TouchRoleLt}, {5, "RT", TouchRoleRt}, {6, "START", TouchRoleStart}};
+        static_assert(std::size(rows) == sfr::touch_options::names.size());
+        const float switch_width = ImGui::GetFrameHeight() * 1.9f;
+        const ImGuiTableFlags flags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_SizingStretchProp;
+        if (!ImGui::BeginTable("##touch_buttons", 3, flags, ImVec2(content_width, 0))) return;
+        ImGui::TableSetupColumn(tr(TouchButtonColumn), ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn(tr(TouchShownColumn), ImGuiTableColumnFlags_WidthFixed, switch_width + 24 * scale);
+        ImGui::TableSetupColumn(tr(TouchNameColumn), ImGuiTableColumnFlags_WidthFixed, switch_width + 24 * scale);
+        ImGui::PushStyleColor(ImGuiCol_Text, cyan);
+        ImGui::TableHeadersRow();
+        ImGui::PopStyleColor();
+        // A switch for one bit of a mask that is set when the switch is off.
+        const auto bit_switch = [&](const char* id, uint32_t& off_mask, uint32_t bit) {
+            bool on = (off_mask & bit) == 0;
+            if (toggle(id, &on)) off_mask = on ? off_mask & ~bit : off_mask | bit;
+            focus_glow(ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetFrameHeight() * 0.5f,
+                       focus_amount(ImGui::IsItemFocused() && nav_visible()), scale);
+        };
+        for (const Row& row : rows) {
+            const uint32_t bit = 1u << row.circle;
+            ImGui::PushID(int(row.circle));
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted(row.name);
+            ImGui::SameLine(0, 12 * scale);
+            ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
+            ImGui::TextUnformatted(tr(row.role));
+            ImGui::PopStyleColor();
+            ImGui::TableNextColumn();
+            bit_switch("##shown", settings.touch_hidden, bit);
+            ImGui::TableNextColumn();
+            // A hidden control has no name to show, nor does any with every
+            // name off.
+            ImGui::BeginDisabled((settings.touch_hidden & bit) != 0 || !settings.touch_labels);
+            bit_switch("##named", settings.touch_unnamed, bit);
+            ImGui::EndDisabled();
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
+        ImGui::Dummy(ImVec2(0, 6 * scale));
+    }
+
+    // Where each touch control sits and how big it is (Issue #443,
+    // touch_layout.h): a picture of the game's screen with the controls on
+    // it, in the shape the game will have. A finger (or the mouse) drags a
+    // control; the one touched last is chosen, and the size slider and Reset
+    // act on it. Folded until opened.
+    bool touch_layout_open = false;
+    int touch_layout_choice = -1;  // the chosen circle, -1 for none
+    bool touch_layout_dragging = false;
+    ImVec2 touch_layout_grab{};  // the chosen centre minus the finger, in pixels
+    void touch_layout_editor() {
+        namespace layout = sfr::touch_layout;
+        collapsible_section(SectionTouchLayout, touch_layout_open);
+        if (!touch_layout_open) return;
+        ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
+        ImGui::PushTextWrapPos(content_width);
+        ImGui::TextUnformatted(wrapped(tr(TouchLayoutHint), room_to(content_width)).c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        ImGui::Dummy(ImVec2(0, 4 * scale));
+        // The game's shape: the screen's with Aspect Ratio Auto, else 16:9.
+        const ImGuiIO& io = ImGui::GetIO();
+        const ImVec2 display = io.DisplaySize;
+        const float aspect = settings.aspect_ratio == "auto" && display.y > 0.0f && display.x > display.y
+                                 ? std::clamp(display.x / display.y, 1.0f, 4.0f)
+                                 : layout::default_aspect;
+        float width = content_width, height = width / aspect;
+        if (const float most = display.y * 0.42f; height > most) {
+            height = most;
+            width = height * aspect;
+        }
+        const ImVec2 top = ImGui::GetCursorScreenPos();
+        const ImVec2 origin(top.x + (content_width - width) * 0.5f, top.y);
+        const ImVec2 end(origin.x + width, origin.y + height);
+        ImGui::SetCursorScreenPos(origin);
+        ImGui::InvisibleButton("##touch_layout", ImVec2(width, height));
+        const bool active = ImGui::IsItemActive();
+        // Held, the finger drags a control and does not scroll the page
+        // (touch_drag_scroll leaves a widget that takes the arrows alone).
+        if (active) GImGui->ActiveIdUsingNavDirMask = ~0u;
+        const auto shown = [&](size_t circle) { return (settings.touch_hidden & (1u << circle)) == 0; };
+        const auto at = [&](size_t circle) { return layout::resolve(circle, settings.touch_layout.places[circle], aspect); };
+        const auto screen = [&](float x, float y) { return ImVec2(origin.x + x * width, origin.y + y * height); };
+        if (touch_layout_choice >= 0 && !shown(size_t(touch_layout_choice))) touch_layout_choice = -1;
+        if (ImGui::IsItemActivated()) {
+            // The control under the finger: the nearest centre, in radii,
+            // within the slack the game gives a touch. Controls put on top
+            // of each other: touching inside the stack again chooses the next
+            // one there, so a covered control can still be chosen.
+            touch_layout_dragging = false;
+            const int previous = touch_layout_choice;
+            touch_layout_choice = -1;
+            std::vector<std::pair<float, int>> under;  // (radii from the centre, circle)
+            for (size_t i = 0; i < layout::count; ++i) {
+                if (!shown(i)) continue;
+                const auto [x, y, r] = at(i);
+                const ImVec2 c = screen(x, y);
+                const float by = std::hypot(io.MousePos.x - c.x, io.MousePos.y - c.y) / (r * height);
+                if (by <= layout::touch_slack) under.emplace_back(by, int(i));
+            }
+            std::sort(under.begin(), under.end());
+            if (!under.empty()) touch_layout_choice = under.front().second;
+            // The stack: the circles the finger is inside (not just near).
+            const size_t stack = size_t(std::count_if(under.begin(), under.end(), [](const auto& c) { return c.first <= 1.0f; }));
+            for (size_t k = 0; stack > 1 && k < stack; ++k)
+                if (under[k].second == previous) {
+                    touch_layout_choice = under[(k + 1) % stack].second;
+                    break;
+                }
+            if (touch_layout_choice >= 0) {
+                const auto [x, y, r] = at(size_t(touch_layout_choice));
+                const ImVec2 c = screen(x, y);
+                touch_layout_grab = ImVec2(c.x - io.MousePos.x, c.y - io.MousePos.y);
+                ::play(sfr::UiSound::move);
+            }
+        }
+        if (!active) touch_layout_dragging = false;
+        else if (touch_layout_choice >= 0 && (touch_layout_dragging || ImGui::IsMouseDragging(ImGuiMouseButton_Left, 6 * scale))) {
+            // A tap only chooses; a drag past a few pixels moves.
+            touch_layout_dragging = true;
+            const size_t c = size_t(touch_layout_choice);
+            const auto& place = settings.touch_layout.places[c];
+            const float size = place ? place->scale : 1.0f;
+            settings.touch_layout.places[c] =
+                layout::place_at(c, (io.MousePos.x + touch_layout_grab.x - origin.x) / width,
+                                 (io.MousePos.y + touch_layout_grab.y - origin.y) / height, size, aspect);
+        }
+        // The picture: a dark screen, the stick's side in a race, the controls
+        // in the game's colours (blit.hlsl) with their names.
+        ImDrawList* draw = ImGui::GetWindowDrawList();
+        draw->AddRectFilledMultiColor(origin, end, IM_COL32(30, 56, 104, 255), IM_COL32(30, 56, 104, 255), IM_COL32(8, 16, 38, 255),
+                                      IM_COL32(8, 16, 38, 255));
+        draw->PushClipRect(origin, end, true);
+        if (shown(0)) {
+            const auto [from, to] = layout::race_stick_area(settings.touch_layout.places[0], aspect);
+            draw->AddRectFilled(screen(from, 0.0f), screen(to, 1.0f), IM_COL32(255, 255, 255, 16));
+            const char* label = tr(TouchLayoutStickArea);
+            const float label_x = from == 0.0f ? screen(from, 0.0f).x + 8 * scale
+                                               : screen(to, 0.0f).x - ImGui::CalcTextSize(label).x - 8 * scale;
+            draw->AddText(ImVec2(label_x, origin.y + height * 0.2f), color(dim_text, 0.8f), label);
+        }
+        static constexpr const char* names[layout::count] = {"LS", "A", "B", "X", "Y", "RT", "START", "LB", "RB", "LT", "RS"};
+        static constexpr ImU32 colours[layout::count] = {
+            IM_COL32(255, 255, 255, 255), IM_COL32(64, 217, 77, 255), IM_COL32(242, 64, 64, 255), IM_COL32(64, 128, 255, 255),
+            IM_COL32(255, 217, 51, 255), IM_COL32(191, 191, 191, 255), IM_COL32(255, 255, 255, 255), IM_COL32(255, 140, 38, 255),
+            IM_COL32(255, 140, 38, 255), IM_COL32(191, 191, 191, 255), IM_COL32(89, 230, 255, 255)};
+        const auto with_alpha = [](ImU32 colour, int alpha) { return (colour & ~IM_COL32_A_MASK) | (ImU32(alpha) << IM_COL32_A_SHIFT); };
+        ImFont* font = ImGui::GetFont();
+        for (size_t i = 0; i < layout::count; ++i) {
+            if (!shown(i)) continue;
+            const auto [x, y, r] = at(i);
+            const ImVec2 c = screen(x, y);
+            const float radius = r * height;
+            const bool chosen = int(i) == touch_layout_choice;
+            draw->AddCircleFilled(c, radius, with_alpha(colours[i], chosen ? 110 : 60));
+            draw->AddCircle(c, radius, with_alpha(colours[i], 220), 0, (chosen ? 3.0f : 1.5f) * scale);
+            if (i == 0 || i == 10) draw->AddCircleFilled(c, radius * 0.45f, IM_COL32(255, 255, 255, 80));  // the knob
+            if (chosen) draw->AddCircle(c, radius + 5 * scale, color(cyan, 0.95f), 0, 2.5f * scale);
+            const float size = (std::min)(ImGui::GetFontSize(), radius * (names[i][1] && names[i][2] ? 0.55f : 0.95f));
+            const ImVec2 text = font->CalcTextSizeA(size, FLT_MAX, 0.0f, names[i]);
+            draw->AddText(font, size, ImVec2(c.x - text.x * 0.5f, c.y - text.y * 0.5f), IM_COL32(255, 255, 255, 235), names[i]);
+        }
+        draw->PopClipRect();
+        draw->AddRect(origin, end, color(cyan, 0.55f), 0.0f, 0, 1.5f * scale);
+        ImGui::SetCursorScreenPos(ImVec2(top.x, end.y));
+        ImGui::Dummy(ImVec2(0, 8 * scale));
+        // The chosen control's size, and the resets.
+        if (touch_layout_choice < 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text, dim_text);
+            ImGui::TextUnformatted(tr(TouchLayoutPick));
+            ImGui::PopStyleColor();
+        } else {
+            const size_t c = size_t(touch_layout_choice);
+            char label[64];
+            std::snprintf(label, sizeof label, tr(TouchLayoutSize), names[c]);
+            const float slider_width = 300 * scale;
+            setting_row(label, nullptr, slider_width, scale, [&] {
+                const auto& place = settings.touch_layout.places[c];
+                const int low = int(std::ceil(layout::min_scale_of(c) * 100.0f - 0.001f)), high = int(layout::max_scale * 100.0f);
+                int percent = std::clamp(int(std::lround((place ? place->scale : 1.0f) * 100.0f)), low, high);
+                ImGui::SetNextItemWidth(slider_width);
+                bool moved = ImGui::SliderInt("##touch_size", &percent, low, high, "%d%%", ImGuiSliderFlags_AlwaysClamp);
+                moved |= slider_steps(&percent, low, high, 5);
+                if (moved) {
+                    const auto [x, y, r] = at(c);
+                    settings.touch_layout.places[c] = layout::place_at(c, x, y, float(percent) / 100.0f, aspect);
+                }
+            });
+            ImGui::BeginDisabled(!settings.touch_layout.places[c]);
+            if (small_button(tr(TouchLayoutReset), scale)) settings.touch_layout.places[c].reset();
+            ImGui::EndDisabled();
+            ImGui::SameLine(0, 12 * scale);
+        }
+        ImGui::BeginDisabled(settings.touch_layout.empty());
+        if (small_button(tr(TouchLayoutResetAll), scale)) settings.touch_layout = {};
+        ImGui::EndDisabled();
+        ImGui::Dummy(ImVec2(0, 6 * scale));
+    }
+
     void controls_settings() {
 #if defined(__ANDROID__) || defined(SFR_IOS)
         settings_section(SectionTouch);
@@ -2817,6 +3280,8 @@ struct Launcher {
         setting_row(tr(TouchNames), tr(TouchNamesHint), switch_width, scale, [&] { toggle("##touch_names", &settings.touch_labels); });
         setting_row(tr(TiltLabel), tr(TiltHint), switch_width, scale, [&] { toggle("##tilt", &settings.tilt); });
         setting_row(tr(TiltLeanLabel), tr(TiltLeanHint), switch_width, scale, [&] { toggle("##tilt_lean", &settings.tilt_lean); });
+        touch_button_list();
+        touch_layout_editor();
 #endif
         read_bindings();
         const float combo_width = 300 * scale;
@@ -3737,14 +4202,22 @@ struct Launcher {
         if (small_button(tr(Defaults), scale)) {
             const auto image = settings.image_directory, assets = settings.asset_directory;
             const auto saves = settings.save_directory;  // the saves stay where they are
+            const auto checked_at = settings.update_checked_at;  // the last update check's answer is not a setting
+            const auto update_version = settings.update_version, update_url = settings.update_url;
             settings = {};
             settings.save_directory = saves;
+            settings.update_checked_at = checked_at;
+            settings.update_version = update_version;
+            settings.update_url = update_url;
             avatar_model_import_failed = false;
             settings.image_directory = image;
             settings.asset_directory = assets;
             sfr::apply_default_window_size(settings, desktop_width, desktop_height);
             ui_sounds.enabled = settings.ui_sounds;
             apply_language(settings.language);
+#if defined(__linux__) && !defined(__ANDROID__)
+            sync_application_menu();  // on again by default
+#endif
             bindings_read = false;  // the Controls page reads them again
             capturing = -1;
         }
@@ -4323,11 +4796,14 @@ struct Launcher {
         page_fade = approach(page_fade, 1.0f, 7.0f);
         if (leaving && appear < 0.03f) launch_now();
         poll_online_check();
+        poll_update_check();
         draw_backdrop(ImGui::GetBackgroundDrawList(), io.DisplaySize, float(ImGui::GetTime()), scale);
 
         const Text bar = page == Page::Settings ? BarSettings : page == Page::Stopped ? BarStopped
                        : page == Page::Installing ? BarInstalling : BarInstaller;
-        bars(io.DisplaySize, tr(bar), page == Page::Installing, language_button_width());
+        const bool update_shown = page != Page::Installing && update_available();
+        bars(io.DisplaySize, tr(bar), page == Page::Installing,
+             language_button_width() + (update_shown ? update_button_width() + 12 * scale : 0.0f));
 
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(io.DisplaySize);
@@ -4336,6 +4812,7 @@ struct Launcher {
                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings |
                      ImGuiWindowFlags_NoBringToFrontOnFocus);
         language_button(io.DisplaySize);
+        if (update_shown) update_button(io.DisplaySize);
         switch (page) {
         case Page::Settings: settings_page(io.DisplaySize); break;
         case Page::Stopped: stopped_page(io.DisplaySize); break;
@@ -4572,6 +5049,9 @@ int main(int argc, char** argv) {
     launcher.settings = sfr::load_launcher_settings(launcher.settings_file);
     apply_language(launcher.settings.language);
     launcher.ui_sounds.enabled = launcher.settings.ui_sounds;
+#if defined(__linux__) && !defined(__ANDROID__)
+    launcher.sync_application_menu();  // the menu entry follows where the launcher is
+#endif
     if (launcher.settings.image_directory.empty())
         launcher.settings.image_directory = sfr::default_image_directory(launcher.directory);
     if (launcher.settings.asset_directory.empty())

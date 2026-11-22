@@ -58,6 +58,13 @@ and holds up to 200, one part slot opens, the ring drain can be tuned for
 riding and for flight, the kick-dash flight can be turned off, and the Ring
 Eater's shield can be hidden while Super. Mods are off online.
 
+## Known limits
+
+- **Online play and multiplayer have not been tested at all** on the PS5:
+  neither online races nor local split-screen. They may not work.
+- The first races can hitch briefly while graphics pipelines are prepared.
+- The pre-race Kinect warm-up still plays.
+
 ## Reporting problems
 
 Open an issue **on this repository** (not on Free Riders Recompiled) with

@@ -2100,6 +2100,27 @@ SFR_CONCURRENT_HOOK(sub_82280570) {
     if(now==100) memory.store<uint32_t>(racer+2180,uint32_t(std::min(asked,cap)));
 }
 
+// SFR_MOD_CHAOS_QUIET_DRAIN=1: Super Sonic's ring drain (82296348 takes a
+// ring through 82280828, returning to 822963E8) makes no ring sound.
+// 82280828 plays it (82230860) only when the frame counter
+// [[[0x83E516A0]+24]+68] is more than 2 past the last time it did
+// (0x82B09FB0); the drain's call runs with that time set to now.
+PPC_FUNC_IMPL(__imp__sub_82280828);
+SFR_CONCURRENT_HOOK(sub_82280828) {
+    static const bool quiet=[]{
+        const char* t=std::getenv("SFR_MOD_CHAOS_QUIET_DRAIN");
+        const auto set=[](const char* n){ const char* v=std::getenv(n); return v && *v; };
+        return t && *t=='1' && !set("SFR_LIVE_HOST") && !set("SFR_LIVE_SERVER");
+    }();
+    if(quiet && uint32_t(ctx.lr)==0x822963E8u) {
+        auto& memory=*sfr::active_memory;
+        const uint32_t clock=memory.load<uint32_t>(0x83E516A0u);
+        const uint32_t timing=clock?memory.load<uint32_t>(clock+24):0;
+        if(timing) memory.store<uint32_t>(0x82B09FB0u,memory.load<uint32_t>(timing+68));
+    }
+    __imp__sub_82280828(ctx,base);
+}
+
 // SFR_MOD_CHAOS_TRANSFORM_RINGS=N (31-999): Sonic turns into Super Sonic at
 // N rings, not 30. 82296348 (the Chaos Emeralds' racer update; r3 its state,
 // +52 0 while Sonic, r4 the racer, rings at +2180) compares the rings with an

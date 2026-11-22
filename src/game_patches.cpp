@@ -11,6 +11,7 @@
 #include "job_lifetime.h"
 #include "stream_reader_gate.h"
 #include "touch_controls.h"
+#include "mod_settings.h"
 #include "super_sonic_board.h"
 #include "cpu_difficulty.h"
 #include <mutex>
@@ -1988,47 +1989,45 @@ static void test_player_breakaway() {
 namespace {
 constexpr uint32_t gear_table=0x82B47E78, gear_entry_size=416, chaos_emeralds_gear=38;
 void apply_chaos_emerald_mod() {
-    static std::once_flag once;
-    std::call_once(once,[]{
-        if(!sfr::active_memory) return;
-        const auto env=[](const char* name){ const char* t=std::getenv(name); return t?std::string_view(t):std::string_view(); };
-        if(!env("SFR_LIVE_HOST").empty() || !env("SFR_LIVE_SERVER").empty()) return;
-        const bool types=env("SFR_MOD_CHAOS_TYPES")=="1";
-        int slots=-1;
-        if(const auto text=env("SFR_MOD_CHAOS_SLOTS"); text.size()==1 && text[0]>='0' && text[0]<='3') slots=text[0]-'0';
-        if(!types && slots<0) return;
-        const uint64_t entry=uint64_t(gear_table)+uint64_t(chaos_emeralds_gear)*gear_entry_size;
-        auto& memory=*sfr::active_memory;
-        const uint32_t old_parts=memory.load<uint32_t>(entry+12), old_slots=memory.load<uint32_t>(entry+24),
-                       old_types=memory.load<uint32_t>(entry+112);
-        if(types) memory.store<uint32_t>(entry+112,sfr::super_sonic::type_speed);
-        if(slots>=0) {
-            memory.store<uint32_t>(entry+24,uint32_t(slots));
-            uint32_t exclude=0xE;  // part ids 1-3: grind, air ride, power (power is 3: build 39)
-            if(const auto text=env("SFR_MOD_CHAOS_EXCLUDE_PARTS"); !text.empty())
-                exclude=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
-            uint32_t allowed=~exclude;
-            // SFR_MOD_CHAOS_ALLOWED_PARTS=0xMASK: exactly these parts (a bit
-            // per part id), e.g. 0x8 for the Ring Eater alone.
-            if(const auto text=env("SFR_MOD_CHAOS_ALLOWED_PARTS"); !text.empty())
-                allowed=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
-            if(slots>0) memory.store<uint32_t>(entry+12,allowed);
-        }
-        std::cerr << "GAME_PATCH chaos_emerald_mod types=0x" << std::hex << old_types << "->0x"
-                  << memory.load<uint32_t>(entry+112) << " slots=" << std::dec << old_slots << "->"
-                  << memory.load<uint32_t>(entry+24) << " parts=0x" << std::hex << old_parts << "->0x"
-                  << memory.load<uint32_t>(entry+12) << std::dec << '\n';
-    });
+    // The table entry as the game has it, kept the first time; it is
+    // rewritten from that and the Mods tab (mod_settings.h) whenever a
+    // setting has changed since.
+    static std::mutex lock;
+    static bool kept=false;
+    static uint32_t old_parts=0, old_slots=0, old_types=0, applied=~0u;
+    if(!sfr::active_memory) return;
+    const uint32_t generation=sfr::mods::generation();
+    if(generation==applied) return;
+    std::lock_guard guard(lock);
+    if(generation==applied) return;
+    const uint64_t entry=uint64_t(gear_table)+uint64_t(chaos_emeralds_gear)*gear_entry_size;
+    auto& memory=*sfr::active_memory;
+    if(!kept) {
+        old_parts=memory.load<uint32_t>(entry+12); old_slots=memory.load<uint32_t>(entry+24); old_types=memory.load<uint32_t>(entry+112);
+        kept=true;
+    }
+    const auto env=[](const char* name){ const char* t=std::getenv(name); return t?std::string_view(t):std::string_view(); };
+    const bool types=sfr::mods::value(sfr::mods::chaos_types)!=0;
+    const int slots=sfr::mods::value(sfr::mods::chaos_slots);
+    memory.store<uint32_t>(entry+112,types?sfr::super_sonic::type_speed:old_types);
+    uint32_t exclude=0xE;  // part ids 1-3: grind, air ride, power (power is 3: build 39)
+    if(const auto text=env("SFR_MOD_CHAOS_EXCLUDE_PARTS"); !text.empty())
+        exclude=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
+    uint32_t allowed=~exclude;
+    // SFR_MOD_CHAOS_ALLOWED_PARTS=0xMASK: exactly these parts (a bit per
+    // part id), e.g. 0x8 for the power part alone.
+    if(const auto text=env("SFR_MOD_CHAOS_ALLOWED_PARTS"); !text.empty())
+        allowed=uint32_t(std::strtoul(std::string(text).c_str(),nullptr,0));
+    memory.store<uint32_t>(entry+24,slots>0?uint32_t(slots):old_slots);
+    memory.store<uint32_t>(entry+12,slots>0?allowed:old_parts);
+    applied=generation;
+    std::cerr << "GAME_PATCH chaos_emerald_mod types=0x" << std::hex << old_types << "->0x"
+              << memory.load<uint32_t>(entry+112) << " slots=" << std::dec << old_slots << "->"
+              << memory.load<uint32_t>(entry+24) << " parts=0x" << std::hex << old_parts << "->0x"
+              << memory.load<uint32_t>(entry+12) << std::dec << '\n';
 }
 }
-bool chaos_mod_types() {
-    static const bool on=[]{
-        const auto set=[](const char* n){ const char* t=std::getenv(n); return t && *t; };
-        const char* t=std::getenv("SFR_MOD_CHAOS_TYPES");
-        return t && *t=='1' && !set("SFR_LIVE_HOST") && !set("SFR_LIVE_SERVER");
-    }();
-    return on;
-}
+bool chaos_mod_types() { return sfr::mods::value(sfr::mods::chaos_types)!=0; }
 bool chaos_mod_super() { return chaos_mod_types(); }
 // After an update that left Super Sonic transformed (phase 3 on), his live
 // gear gets all three types; the return to Sonic rebuilds it from the table
@@ -2084,13 +2083,7 @@ bool chaos_super(uint32_t racer) {
 // [[0x83E52F8C]+80]+12); the count asked for is put back over 100, up to N.
 PPC_FUNC_IMPL(__imp__sub_82280570);
 SFR_CONCURRENT_HOOK(sub_82280570) {
-    static const int32_t cap=[]{
-        const char* t=std::getenv("SFR_MOD_CHAOS_RING_CAP");
-        const auto set=[](const char* n){ const char* v=std::getenv(n); return v && *v; };
-        if(!t || !*t || set("SFR_LIVE_HOST") || set("SFR_LIVE_SERVER")) return 0;
-        const long n=std::strtol(t,nullptr,10);
-        return n>100 && n<1000 ? int32_t(n) : 0;
-    }();
+    const int32_t cap=sfr::mods::value(sfr::mods::chaos_ring_cap)>100?sfr::mods::value(sfr::mods::chaos_ring_cap):0;
     const uint32_t racer=ctx.r3.u32;
     const int32_t asked=int32_t(ctx.r4.u32);
     __imp__sub_82280570(ctx,base);
@@ -2107,11 +2100,7 @@ SFR_CONCURRENT_HOOK(sub_82280570) {
 // (0x82B09FB0); the drain's call runs with that time set to now.
 PPC_FUNC_IMPL(__imp__sub_82280828);
 SFR_CONCURRENT_HOOK(sub_82280828) {
-    static const bool quiet=[]{
-        const char* t=std::getenv("SFR_MOD_CHAOS_QUIET_DRAIN");
-        const auto set=[](const char* n){ const char* v=std::getenv(n); return v && *v; };
-        return t && *t=='1' && !set("SFR_LIVE_HOST") && !set("SFR_LIVE_SERVER");
-    }();
+    const bool quiet=sfr::mods::value(sfr::mods::chaos_quiet_drain)!=0;
     if(quiet && uint32_t(ctx.lr)==0x822963E8u) {
         auto& memory=*sfr::active_memory;
         const uint32_t clock=memory.load<uint32_t>(0x83E516A0u);
@@ -2128,12 +2117,7 @@ SFR_CONCURRENT_HOOK(sub_82280828) {
 // adds or takes in the meantime are kept.
 PPC_FUNC_IMPL(__imp__sub_82296348);
 SFR_CONCURRENT_HOOK(sub_82296348) {
-    static const int32_t threshold=[]{
-        const char* t=std::getenv("SFR_MOD_CHAOS_TRANSFORM_RINGS");
-        if(!t || !*t || std::getenv("SFR_LIVE_HOST") && *std::getenv("SFR_LIVE_HOST") || std::getenv("SFR_LIVE_SERVER") && *std::getenv("SFR_LIVE_SERVER")) return 0;
-        const long n=std::strtol(t,nullptr,10);
-        return n>30 && n<1000 ? int32_t(n) : 0;
-    }();
+    const int32_t threshold=sfr::mods::value(sfr::mods::chaos_transform)>30?sfr::mods::value(sfr::mods::chaos_transform):0;
     auto& memory=*sfr::active_memory;
     note_chaos_racer(ctx.r4.u32);
     note_chaos_state(ctx.r4.u32,memory.load<uint32_t>(ctx.r3.u32+52));
@@ -2153,12 +2137,12 @@ SFR_CONCURRENT_HOOK(sub_82296348) {
 // The Ring Eater's effect (822D4998 places the visible shield; r3+80 the
 // racer): on a Chaos Emeralds racer it is not shown while he is Super Sonic
 // (his Chaos Emeralds state, 82296348's r3+52, not 0), and shown while he is
-// Sonic. SFR_MOD_CHAOS_SUPER_SHIELD=1 shows it as Super Sonic too.
+// Sonic, while the Mods tab's "hide Ring Eater shield" is on (mod_settings.h).
 PPC_FUNC_IMPL(__imp__sub_822D4998);
 SFR_CONCURRENT_HOOK(sub_822D4998) {
-    static const bool shown=[]{ const char* t=std::getenv("SFR_MOD_CHAOS_SUPER_SHIELD"); return t && *t=='1'; }();
+
     const uint32_t racer=sfr::active_memory->load<uint32_t>(ctx.r3.u32+80);
-    if(!shown && chaos_mod_types() && chaos_super(racer)) {
+    if(sfr::mods::value(sfr::mods::chaos_hide_shield)!=0 && chaos_super(racer)) {
         static int told=0;
         if(told++<4) std::cerr << "GAME_PATCH chaos_emerald_shield hidden racer=0x" << std::hex << racer << std::dec << '\n';
         return;

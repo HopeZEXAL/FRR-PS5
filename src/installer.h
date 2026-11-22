@@ -37,7 +37,9 @@ private:
     void read_at(uint64_t offset, std::span<uint8_t> out);
     uint64_t extent(uint32_t sector, uint32_t size) const;
 #ifdef _WIN32
-    std::ifstream file_;
+    // Win32 file handle: read with ReadFile at 64-bit offsets (the C++ streams
+    // of some Windows toolchains seek with a 32-bit long, past 2 GB they fail).
+    void* handle_ = nullptr;
 #else
     // POSIX: read with pread. "/proc/self/fd/N" (a document Android's picker
     // opened for the app) is read through that descriptor, never reopened:

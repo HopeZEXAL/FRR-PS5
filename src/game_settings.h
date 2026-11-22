@@ -38,8 +38,11 @@ enum Id {
     // Advanced
     notifications,     // SFR_ACHIEVEMENT_NOTIFICATIONS
     performance_log,   // SFR_FRAME_METRICS and SFR_GPU_TIMING
+    verbose_log,       // SFR_VERBOSE_LOG: every trace line in game.log (off: errors and start-up only)
     stall_watchdog,    // SFR_STALL_WATCHDOG
     menu_hint,         // SFR_MENU_HINT: "L3 + R3" shown on the title screen
+    reset_all,         // an action: every setting back to its default
+    version_info,      // shows the build (frr_ps5_version); changes nothing
     count
 };
 
@@ -67,8 +70,12 @@ const char* text(Id id);
 int value(Id id);
 // The index of the value shown on the page.
 int index(Id id);
-// Steps the setting by +1 / -1 (wrapping) and saves the file.
+// Steps the setting by +1 / -1 (wrapping) and saves the file. reset_all
+// puts every setting back to its default instead.
 void step(Id id, int by);
+void reset_to_defaults();
+// Whether the row is an action or a note rather than a value to step.
+bool is_action(Id id);
 // Whether a setting that applies after a restart was changed since start.
 bool restart_pending();
 // Writes the file now (before closing the game).
@@ -79,3 +86,5 @@ bool online();
 }
 
 extern "C" int frr_setting_value(int id);
+// The build shown on the page and in crash.log (compat/ps5_version.c).
+extern "C" const char frr_ps5_version[];

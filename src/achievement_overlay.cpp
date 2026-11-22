@@ -125,6 +125,7 @@ struct AchievementOverlay::Impl {
     // menu hint): shown while it waits for START and a few seconds after.
     bool hint_shown = false;
     double hint_until = 0;
+    bool title_was_waiting = false;
     std::shared_ptr<const OverlayImage> hint_image;
     float hint_scale = 0;
     std::vector<size_t> order;
@@ -332,10 +333,17 @@ struct AchievementOverlay::Impl {
                 value_size -= 1;
             const float lw = fonts.measure(label, value_size * s, OverlayFonts::bold);
             const OverlayColor arrows = picked && !locked ? sonic_yellow : text_dim;
-            canvas.text(fonts, "<", value_left * s, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
-            canvas.text(fonts, ">", right * s - aw, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
-            canvas.text(fonts, label, centre * s - lw / 2, (y + 32) * s, value_size * s,
-                        locked ? text_dim : at != item.fallback ? sonic_yellow : text_white, OverlayFonts::bold);
+            const bool action = gs::is_action(id);
+            if (!action) {
+                canvas.text(fonts, "<", value_left * s, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
+                canvas.text(fonts, ">", right * s - aw, (y + 32) * s, 22 * s, arrows, OverlayFonts::bold);
+            }
+            const OverlayColor value_color = id == gs::version_info ? text_soft
+                                             : action              ? (picked ? sonic_yellow : text_white)
+                                             : locked              ? text_dim
+                                             : at != item.fallback ? sonic_yellow
+                                                                   : text_white;
+            canvas.text(fonts, label, centre * s - lw / 2, (y + 32) * s, value_size * s, value_color, OverlayFonts::bold);
             const char* when = item.applies == gs::Applies::restart     ? "Restart"
                                : item.applies == gs::Applies::next_race ? "Next race"
                                : item.applies == gs::Applies::menus     ? "In menus"
@@ -768,8 +776,12 @@ void AchievementOverlay::poll(double now, uint64_t present) {
             const auto id = Impl::settings_order()[size_t(std::clamp(m.setting, 0, settings_list.count - 1))];
             const auto& item = game_settings::settings()[size_t(id)];
             if (!(item.offline_only && game_settings::online())) {
-                if (pressed(pad_a) || pressed(pad_right)) game_settings::step(id, 1);
-                if (pressed(pad_left)) game_settings::step(id, -1);
+                if (game_settings::is_action(id)) {
+                    if (pressed(pad_a)) game_settings::step(id, 1);
+                } else {
+                    if (pressed(pad_a) || pressed(pad_right)) game_settings::step(id, 1);
+                    if (pressed(pad_left)) game_settings::step(id, -1);
+                }
             }
             // Y with a restart waiting: the settings are written and the game
             // closes, to be started again.
@@ -812,7 +824,15 @@ void AchievementOverlay::poll(double now, uint64_t present) {
     m.previous_buttons = buttons;
     m.previous_keys = keys;
     m.toast_frame = m.notifications ? m.toasts.at(now) : std::nullopt;
-    if (game_settings::value(game_settings::menu_hint) && touch_title_waiting()) m.hint_until = now + 6.0;
+    // The hint: for 8 s once START is pressed on the title screen (it stops
+    // waiting while no movie plays: the opening movie also ends the wait).
+    {
+        const bool waiting = touch_title_waiting();
+        if (m.title_was_waiting && !waiting && !touch_movie_playing() && game_settings::value(game_settings::menu_hint))
+            m.hint_until = now + 8.0;
+        m.title_was_waiting = waiting;
+        if (waiting || touch_movie_playing()) m.hint_until = 0;
+    }
     m.hint_shown = game_settings::value(game_settings::menu_hint) && now < m.hint_until;
     set_screen_layers_shown(m.open || m.toast_frame.has_value() || m.hint_shown);
 }

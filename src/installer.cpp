@@ -7,6 +7,15 @@
 #include <map>
 #include <set>
 #include <utility>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #ifndef _WIN32
 #include <cerrno>
 #include <fcntl.h>
@@ -52,11 +61,18 @@ void validate_name(const std::string& name) {
 
 DiscImage::DiscImage(const fs::path& path)
 #ifdef _WIN32
-    : file_(path, std::ios::binary) {
-    if (!file_) throw std::runtime_error("cannot open the disc image");
-    std::error_code error;
-    size_ = fs::file_size(path, error);
-    if (error) throw std::runtime_error("cannot size the disc image");
+{
+    const HANDLE handle = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) throw std::runtime_error("cannot open the disc image");
+    handle_ = handle;
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(handle, &size)) {
+        CloseHandle(handle);
+        handle_ = nullptr;
+        throw std::runtime_error("cannot size the disc image");
+    }
+    size_ = uint64_t(size.QuadPart);
 #else
 {
     const std::string text = path.string();
@@ -158,7 +174,9 @@ uint64_t DiscImage::extent(uint32_t sector, uint32_t size) const {
 }
 
 DiscImage::~DiscImage() {
-#ifndef _WIN32
+#ifdef _WIN32
+    if (handle_) CloseHandle(static_cast<HANDLE>(handle_));
+#else
     if (descriptor_ >= 0) close(descriptor_);
 #endif
 }
@@ -166,10 +184,18 @@ DiscImage::~DiscImage() {
 void DiscImage::read_at(uint64_t offset, std::span<uint8_t> out) {
     if (offset > size_ || out.size() > size_ - offset) throw std::runtime_error("disc read is out of bounds");
 #ifdef _WIN32
-    file_.clear();
-    file_.seekg(std::streamoff(offset));
-    if (!file_.read(reinterpret_cast<char*>(out.data()), std::streamsize(out.size())))
-        throw std::runtime_error("disc read was truncated");
+    for (size_t done = 0; done < out.size();) {
+        const uint64_t at = offset + done;
+        OVERLAPPED where{};
+        where.Offset = DWORD(at & 0xFFFFFFFFu);
+        where.OffsetHigh = DWORD(at >> 32);
+        const DWORD want = DWORD(std::min<size_t>(out.size() - done, size_t(1) << 30));
+        DWORD got = 0;
+        if (!ReadFile(static_cast<HANDLE>(handle_), out.data() + done, want, &got, &where))
+            throw std::runtime_error("disc read failed (error " + std::to_string(GetLastError()) + ")");
+        if (got == 0) throw std::runtime_error("disc read was truncated");
+        done += got;
+    }
 #else
     for (size_t done = 0; done < out.size();) {
         const ssize_t got = pread(descriptor_, out.data() + done, out.size() - done, off_t(offset + done));

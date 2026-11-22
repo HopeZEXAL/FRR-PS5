@@ -280,7 +280,9 @@ SFR_CONCURRENT_HOOK(sub_82817B48) {
     // An empty value is off, like every other switch: the launcher writes the
     // name with no value when the setting is turned off, and a host that keeps
     // it in the environment that way (Android) must not read it as on.
-    static const bool skip_all=[]{ const char* t=std::getenv("SFR_SKIP_MOVIES"); return t && *t && *t!='0'; }();
+    // The skip-every-movie option is gone from the PS5 port; holding a skip
+    // button still ends a movie.
+    constexpr bool skip_all=false;
     // Thirty frames the player really rendered, not thirty calls: on a phone
     // the decoder can answer every call with nothing for a while, and ending
     // the movie then left the title on the white screen this allowance is
@@ -2216,3 +2218,4 @@ PPC_FUNC_IMPL(__imp__sub_825089E0);
 SFR_CONCURRENT_HOOK(sub_825089E0) { apply_chaos_emerald_mod(); __imp__sub_825089E0(ctx,base); }
 PPC_FUNC_IMPL(__imp__sub_823DC7C0);
 SFR_CONCURRENT_HOOK(sub_823DC7C0) { apply_chaos_emerald_mod(); __imp__sub_823DC7C0(ctx,base); }
+

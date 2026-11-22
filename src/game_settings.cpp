@@ -25,6 +25,7 @@ struct State {
 };
 
 int initial_index(const Setting& setting) {
+    if (setting.env.empty()) return setting.fallback;
     const char* text = std::getenv(setting.env[0]);
     // The shield was hidden with the types on before it had a switch of its
     // own (SFR_MOD_CHAOS_SUPER_SHIELD=1 showed it).
@@ -130,7 +131,7 @@ const std::vector<Setting>& settings() {
         {volume, "Audio", {"SFR_VOLUME"}, "Volume", "The game's overall volume.",
          {"0", "10", "20", "30", "40", "50", "60", "70", "80", "90", "100"},
          {"0%", "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100% (Default)"}, 10, Applies::restart, false},
-        {skip_movies, "Audio", {"SFR_SKIP_MOVIES"}, "Skip movies", "Leave out the game's movies.", {"0", "1"},
+        {skip_movies, "", {"SFR_SKIP_MOVIES"}, "Skip movies", "Leave out the game's movies.", {"0", "1"},
          {"Off (Default)", "On"}, 0, Applies::restart, false},
         {skip_logos, "Audio", {"SFR_SKIP_LOGOS"}, "Skip intro logos", "Start at the title screen.", {"0", "1"},
          {"Off (Default)", "On"}, 0, Applies::restart, false},
@@ -177,11 +178,18 @@ const std::vector<Setting>& settings() {
         {performance_log, "Advanced", {"SFR_FRAME_METRICS", "SFR_GPU_TIMING"}, "Performance logging",
          "Frame timings in game.log, for finding slowdowns (it grows large).", {"0", "1"}, {"Off (Default)", "On"}, 0,
          Applies::restart, false},
+        {verbose_log, "Advanced", {"SFR_VERBOSE_LOG"}, "Detailed logging",
+         "Every trace line in game.log, for bug reports (Off keeps errors and start-up only).", {"0", "1"},
+         {"Off (Default)", "On"}, 0, Applies::restart, false},
         {stall_watchdog, "Advanced", {"SFR_STALL_WATCHDOG"}, "Stall watchdog",
-         "Notes in game.log where the game was when a frame is very late.", {"0", "1"}, {"Off", "On (Default)"}, 1,
+         "Notes in game.log where the game was when a frame is very late.", {"0", "1"}, {"Off (Default)", "On"}, 0,
          Applies::now, false},
         {menu_hint, "Advanced", {"SFR_MENU_HINT"}, "Menu hint",
          "On the title screen, a note that L3 + R3 opens this menu.", {"0", "1"}, {"Off", "On (Default)"}, 1,
+         Applies::now, false},
+        {reset_all, "Advanced", {}, "Reset to defaults", "Every setting on this page back to its default.", {""},
+         {"Press A"}, 0, Applies::now, false},
+        {version_info, "Advanced", {}, "Version", "Free Riders Recompiled for PS5.", {""}, {frr_ps5_version}, 0,
          Applies::now, false},
     };
     return all;
@@ -211,7 +219,20 @@ const char* text(Id id) {
 
 int value(Id id) { return int(std::strtol(text(id), nullptr, 10)); }
 
+bool is_action(Id id) { return id == reset_all || id == version_info; }
+
+void reset_to_defaults() {
+    State& s = state();
+    for (const Setting& setting : settings())
+        if (!is_action(setting.id)) s.index[setting.id].store(setting.fallback);
+    s.generation.fetch_add(1);
+    std::cerr << "GAME_SETTINGS reset to defaults\n";
+    save();
+}
+
 void step(Id id, int by) {
+    if (id == reset_all) { reset_to_defaults(); return; }
+    if (is_action(id)) return;
     const Setting& setting = settings()[size_t(id)];
     const int n = int(setting.values.size());
     State& s = state();

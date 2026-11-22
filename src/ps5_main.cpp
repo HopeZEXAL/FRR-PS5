@@ -18,6 +18,7 @@
 #include <thread>
 #include "installer.h"
 #include "launcher_settings.h"
+#include "ps5_status_screen.h"
 
 #include <sys/stat.h>
 #include <unistd.h>
@@ -34,9 +35,12 @@
 #include <cerrno>
 #include <fcntl.h>
 #include <streambuf>
+#include <cstring>
+#include <cctype>
 
 int sfr_game_main(int argc, char** argv);
 extern "C" void frr_ps5_apply_schedule_current();
+extern "C" const char frr_ps5_version[];
 // For compat/ps5_thread_sampler.c (PRESENT_STALL lines).
 extern "C" void frr_log_line(const char* line) { std::cerr << line; }
 // The boot tracer (ps5_boot_trace.c): /data/frr-ps5/boot-trace.txt.
@@ -85,48 +89,11 @@ fs::path install_source() {
     return {};
 }
 
-// Installs game/ from the disc image when it is not there yet. Returns false
-// when there is nothing to play.
-bool ensure_installed() {
+bool installed() {
     std::error_code error;
-    if (fs::is_directory(at("game/image"), error) && fs::is_directory(at("game/assets"), error)) return true;
-    const fs::path source = install_source();
-    if (source.empty()) {
-        std::cerr << "PS5_INSTALL missing: copy your Sonic Free Riders disc image (.iso) to " << root << '\n';
-        klog("no game installed and no .iso in /data/frr-ps5");
-        return false;
-    }
-    const sfr::SourceSummary summary = sfr::inspect_install_source(source);
-    std::cerr << "PS5_INSTALL source=" << source.string() << " problem=" << int(summary.problem)
-              << " files=" << summary.file_count << " bytes=" << summary.total_bytes << " detail=" << summary.detail << '\n';
-    if (summary.problem != sfr::SourceProblem::none) {
-        klog("the disc image cannot be installed: " + summary.detail);
-        return false;
-    }
-    klog("installing the game from " + source.string() + " (several minutes)");
-    const auto start = std::chrono::steady_clock::now();
-    int reported = -1;
-    try {
-        sfr::install_game(source, at("game"), [&](sfr::InstallStage stage, uint64_t done, uint64_t total, const std::string& item) {
-            const int percent = total ? int(done * 100 / total) : 0;
-            if (percent / 5 != reported / 5) {
-                reported = percent;
-                const char* names[] = {"checking", "copying", "decoding", "finishing"};
-                std::cerr << "PS5_INSTALL " << names[int(stage)] << ' ' << percent << "% " << item << '\n';
-                klog("install " + std::string(names[int(stage)]) + " " + std::to_string(percent) + "%");
-            }
-            return true;
-        });
-    } catch (const std::exception& e) {
-        std::cerr << "PS5_INSTALL failed: " << e.what() << '\n';
-        klog(std::string("install failed: ") + e.what());
-        return false;
-    }
-    const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
-    std::cerr << "PS5_INSTALL done seconds=" << seconds << " (the .iso can be deleted now)\n";
-    klog("installed; the .iso can be deleted now");
-    return true;
+    return fs::is_directory(at("game/image"), error) && fs::is_directory(at("game/assets"), error);
 }
+
 // game.log by write(2) on its own descriptor, a line at a time. Through the
 // C library's stderr the log stopped for good at the Vulkan driver's first
 // message (build 7: every later line lost, the start-up marks showing the game
@@ -159,6 +126,7 @@ private:
     void flush_line() {
         std::string& pending = line();
         if (pending.empty()) return;
+        if (!keep(pending)) { pending.clear(); return; }
         {
             std::lock_guard lock(queue_mutex_);
             if (queued_.size() + pending.size() > (16u << 20)) ++dropped_;
@@ -170,6 +138,35 @@ private:
         }
         queue_ready_.notify_one();
         pending.clear();
+    }
+    // Off (the default), game.log keeps the start-up lines, the settings,
+    // the patches and anything that reads as an error; the per-frame traces
+    // (hundreds of thousands of lines a session) only with Detailed logging
+    // (SFR_VERBOSE_LOG=1, the settings page) or performance logging.
+    static bool keep(const std::string& text) {
+        static const bool verbose = [] {
+            for (const char* name : {"SFR_VERBOSE_LOG", "SFR_FRAME_METRICS"})
+                if (const char* v = std::getenv(name); v && *v && *v != '0') return true;
+            return false;
+        }();
+        if (verbose) return true;
+        static const char* const prefixes[] = {"PS5_", "GAME_", "OVERLAY_", "LOG_", "CRASH", "PRESENT_STALL",
+                                               "NATIVE_GRAPHICS", "NATIVE_PRESENTATION", "NATIVE_DEVICE",
+                                               "ACHIEVEMENT", "Free Riders", "Diagnostic"};
+        for (const char* prefix : prefixes)
+            if (text.compare(0, std::strlen(prefix), prefix) == 0) return true;
+        if (text.find("missing_from_pack") != std::string::npos) return true;
+        // The per-frame and per-file traces: their counters ("failed=0",
+        // "errors=") would otherwise match the words below.
+        static const char* const noisy[] = {"NATIVE_", "RESULT ", "IMPORT ", "REQUEST ", "FILE_", "NUI_",
+                                            "RUNTIME_SHADER", "TEXTURE_", "PIPELINE_", "RACE_", "AUDIO_"};
+        for (const char* prefix : noisy)
+            if (text.compare(0, std::strlen(prefix), prefix) == 0) return false;
+        std::string lower(text.size(), 0);
+        std::transform(text.begin(), text.end(), lower.begin(), [](unsigned char c) { return char(std::tolower(c)); });
+        for (const char* word : {"error", "fail", "missing", "crash", "exception", "abort", "assert", "fatal", "warning"})
+            if (lower.find(word) != std::string::npos) return true;
+        return false;
     }
     void write_loop() {
         std::string writing;
@@ -222,7 +219,7 @@ int main() {
     // SDL's PS5 video driver opens VideoOut, which the renderer owns: if
     // anything starts SDL video it gets the dummy driver instead.
     setenv("SDL_VIDEODRIVER", "dummy", 1);
-    std::cerr << "PS5_START root=" << root << " chdir=" << (entered ? "ok" : "refused errno=" + std::to_string(chdir_error)) << '\n';
+    std::cerr << "PS5_START version=\"" << frr_ps5_version << "\" root=" << root << " chdir=" << (entered ? "ok" : "refused errno=" + std::to_string(chdir_error)) << '\n';
     frr_boot_mark("game.log open");
 
     load_settings(at("settings.env"));
@@ -249,10 +246,33 @@ int main() {
     fs::create_directories(at("save"), made);
 
     frr_boot_mark("checking the installation");
-    if (!ensure_installed()) {
-        frr_boot_mark("nothing to play (see game.log)");
-        std::cerr.flush();
-        return 1;
+    // SFR_TEST_STATUS_SCREEN=1: the "not found" screen, to check it on an installed console.
+    if (const char* t = std::getenv("SFR_TEST_STATUS_SCREEN"); t && *t == '1') {
+        sfr::Ps5StatusScreen screen;
+        screen.set("Game files not found (test)",
+                   "This is the screen shown when /data/frr-ps5 has no game files or no shaders.pack. Remove "
+                   "SFR_TEST_STATUS_SCREEN from settings.env to play.",
+                   "Close the game from the PS button.");
+        screen.run_forever();
+    }
+    // The game data and shaders.pack come from the builder on a PC (the PS5
+    // cannot translate shaders); without them, a screen says what to copy.
+    {
+        std::error_code error;
+        const bool game = installed(), shaders = fs::is_regular_file(at("shaders.pack"), error);
+        if (!game || !shaders) {
+            frr_boot_mark("game files missing: the status screen");
+            std::cerr << "PS5_MISSING game=" << game << " shaders=" << shaders << " root=" << root << '\n';
+            sfr::Ps5StatusScreen screen;
+            screen.set(game ? "shaders.pack not found" : "Game files not found",
+                       std::string("Run the Free Riders Recompiled for PS5 Builder on your PC with your own Sonic Free "
+                                   "Riders (Xbox 360) disc image. Copy the whole frr-ps5 folder it makes to "
+                                   "/data/frr-ps5 on this console") +
+                           (game ? " (it holds shaders.pack, which is missing here)" : "") +
+                           ", then start the game again.",
+                       "Close the game from the PS button. Details are in /data/frr-ps5/game.log.");
+            screen.run_forever();
+        }
     }
     const char* region = std::getenv("SFR_GAME_REGION");
     std::string region_argument = std::string("--game-region=") + (region && *region ? region : "ntsc-us");

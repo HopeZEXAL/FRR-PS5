@@ -409,6 +409,22 @@ const ShaderCacheEntry& runtime_shader(ShaderStage stage, std::span<const uint8_
             return owned.entry;
         }
 
+#ifdef __PROSPERO__
+    // The PS5 has no translator: a shader missing from shaders.pack is made
+    // untranslatable (its draws are skipped and reported) instead of stopping
+    // the game, and noted with its key so the pack can be completed.
+    {
+        auto& owned = shaders.emplace_back();
+        owned.source.assign(source.begin(), source.end());
+        by_hash[hash].push_back(shaders.size() - 1);
+        owned.failure = "not in shaders.pack";
+        owned.entry = ShaderCacheEntry{owned.source, {}, stage, 0};
+        std::cerr << "RUNTIME_SHADER stage=" << (stage == ShaderStage::vertex ? "vertex" : "pixel")
+                  << " source_bytes=" << source.size() << " missing_from_pack=1 hash=" << std::hex << hash << std::dec
+                  << '\n';
+        return owned.entry;
+    }
+#endif
     char name[32];
     // "v2" added the screen-space mapping to vertex shaders; "v3" renames
     // TEXCOORD4-7 vertex elements before translation; "v4" declares the

@@ -309,6 +309,7 @@ int64_t steady_ms() {
 }
 
 void note_touch_movie() { movie_ms.store(steady_ms(), std::memory_order_relaxed); }
+bool touch_movie_playing() { return steady_ms() - movie_ms.load(std::memory_order_relaxed) < 250; }
 void set_touch_story(bool on) { story_now.store(on, std::memory_order_relaxed); }
 
 bool touch_in_scenes() {

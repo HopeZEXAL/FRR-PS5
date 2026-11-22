@@ -136,7 +136,9 @@ const std::vector<Setting>& settings() {
          {"Off", "On"}, 0, Applies::restart, false},
         {cpu_difficulty, "Gameplay", {"SFR_CPU_DIFFICULTY"}, "CPU difficulty", "How hard the computer racers try.",
          {"easy", "normal", "hard"}, {"Easy", "Normal", "Hard"}, 1, Applies::next_race, false},
-        {skip_warmup, "Gameplay", {"SFR_SKIP_RACE_WARMUP"}, "Skip race warm-up",
+        // Hidden (no section) until it reaches the ride: build 48 ended the
+        // "On your Gear!" preparation early and the ride still played.
+        {skip_warmup, "", {"SFR_SKIP_RACE_WARMUP"}, "Skip race warm-up",
          "Leave out the ride after Omochao through the cones before each race.", {"0", "1"}, {"Off", "On"}, 0,
          Applies::next_race, false},
         {chaos_types, "Super Sonic", {"SFR_MOD_CHAOS_TYPES"}, "Types",
@@ -159,6 +161,12 @@ const std::vector<Setting>& settings() {
         {no_flight, "Super Sonic", {"SFR_SUPER_SONIC_STAY_ON_BOARD"}, "Kick dash flight",
          "Off keeps Super Sonic on his board: the kick dash is an ordinary one.", {"0", "1"}, {"On", "Off"}, 0,
          Applies::now, true},
+        {drain_riding, "Super Sonic", {"SFR_MOD_CHAOS_DRAIN_RIDING"}, "Ring drain: riding",
+         "How fast Super Sonic loses rings on his board. The game takes none.", {"0", "3000", "2000", "1000", "500", "250"},
+         {"None", "1 per 3 s", "1 per 2 s", "1 per 1 s", "2 per 1 s", "4 per 1 s"}, 0, Applies::now, true},
+        {drain_flight, "Super Sonic", {"SFR_MOD_CHAOS_DRAIN_FLIGHT"}, "Ring drain: flight",
+         "How fast Super Sonic loses rings while flying after a kick dash.", {"game", "off", "1000", "500", "250", "100"},
+         {"Game (3 per 1 s)", "None", "1 per 1 s", "2 per 1 s", "4 per 1 s", "10 per 1 s"}, 0, Applies::now, true},
         {touchpad_pointer, "Controls", {"SFR_TOUCHPAD_POINTER"}, "Touchpad pointer",
          "The touchpad moves the menus' hand cursor.", {"0", "1"}, {"Off", "On"}, 1, Applies::now, false},
         {button_prompts, "Controls", {"SFR_BUTTON_PROMPTS"}, "Button prompts",

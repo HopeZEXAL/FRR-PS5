@@ -30,6 +30,8 @@ enum Id {
     chaos_hide_shield, // SFR_MOD_CHAOS_HIDE_SHIELD: Ring Eater's shield hidden while Super
     chaos_quiet_drain, // SFR_MOD_CHAOS_QUIET_DRAIN: no ring sound for Super Sonic's drain
     no_flight,         // SFR_SUPER_SONIC_STAY_ON_BOARD: the kick dash starts no flight
+    drain_riding,      // SFR_MOD_CHAOS_DRAIN_RIDING: ms a ring while Super Sonic rides (0 = none, the game's)
+    drain_flight,      // SFR_MOD_CHAOS_DRAIN_FLIGHT: ms a ring while he flies ("game" = the game's third of a second)
     // Controls
     touchpad_pointer,  // SFR_TOUCHPAD_POINTER
     button_prompts,    // SFR_BUTTON_PROMPTS

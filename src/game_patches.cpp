@@ -2120,11 +2120,64 @@ SFR_CONCURRENT_HOOK(sub_82280828) {
 // immediate 30; while Sonic has 30 to N-1 the call sees 29, and the rings it
 // adds or takes in the meantime are kept.
 PPC_FUNC_IMPL(__imp__sub_82296348);
+// Super Sonic's ring drain (the settings page's two drains): 82296348 in
+// state 2 (Super Sonic; r3+52) takes a ring through 82280828 when its timer
+// (r3+48, seconds) runs out, only while the racer is riding (+2472 7) and
+// flies (byte +2732); the timer starts again from [0x8218FCEC]. A flight
+// drain of our own keeps that timer full and takes the rings here; so does
+// a riding drain, which the game has none of. Rings are taken as the game
+// takes them (82280828(racer, -1), as if from its own call site, so the quiet
+// drain applies too); at 0 he turns back as ever.
+static void chaos_drain(PPCContext& ctx, uint8_t* base, uint32_t state_object, uint32_t racer, bool before) {
+    namespace gs=sfr::game_settings;
+    auto& memory=*sfr::active_memory;
+    static std::array<std::pair<uint32_t,float>,8> owed{};  // per racer: seconds into the current ring
+    auto& slot=[&]() -> std::pair<uint32_t,float>& {
+        for(auto& o:owed) if(o.first==racer) return o;
+        for(auto& o:owed) if(!o.first) { o={racer,0.f}; return o; }
+        owed[racer%owed.size()]={racer,0.f};
+        return owed[racer%owed.size()];
+    }();
+    const bool super=memory.load<uint32_t>(state_object+52)==2;
+    const bool riding=memory.load<uint32_t>(racer+2472)==7;
+    const bool flying=memory.load<uint8_t>(racer+2732)!=0;
+    const char* flight=gs::text(gs::drain_flight);
+    const bool game_flight=std::strcmp(flight,"game")==0;
+    constexpr uint32_t timer_reset=0x8218FCEC;
+    if(before) {
+        // Our flight drain (or none): the game's timer never runs out.
+        if(super && !game_flight) memory.store<uint32_t>(state_object+48,std::bit_cast<uint32_t>(1000.0f));
+        else if(std::bit_cast<float>(memory.load<uint32_t>(state_object+48))>100.0f)
+            memory.store<uint32_t>(state_object+48,memory.load<uint32_t>(timer_reset));
+        return;
+    }
+    if(!super || !riding) { slot.second=0.f; return; }
+    const long ms=flying ? (game_flight ? 0 : std::strtol(flight,nullptr,10)) : gs::value(gs::drain_riding);
+    if(ms<=0) { slot.second=0.f; return; }
+    slot.second+=1.0f/60.0f;  // the update runs once a race frame
+    const float every=float(ms)/1000.0f;
+    if(slot.second<every) return;
+    slot.second-=every;
+    if(int32_t(memory.load<uint32_t>(racer+2180))<=0) return;
+    PPCContext take=ctx;
+    take.r3.u64=racer;
+    take.r4.s64=-1;
+    take.lr=0x822963E8;
+    sub_82280828(take,base);
+}
+
 SFR_CONCURRENT_HOOK(sub_82296348) {
     const int32_t threshold=sfr::game_settings::value(sfr::game_settings::chaos_transform)>30?sfr::game_settings::value(sfr::game_settings::chaos_transform):0;
     auto& memory=*sfr::active_memory;
     note_chaos_racer(ctx.r4.u32);
     note_chaos_state(ctx.r4.u32,memory.load<uint32_t>(ctx.r3.u32+52));
+    const uint32_t drain_object=ctx.r3.u32, drain_racer=ctx.r4.u32;
+    const bool drains=!sfr::game_settings::online();
+    if(drains) chaos_drain(ctx,base,drain_object,drain_racer,true);
+    struct After {
+        PPCContext& ctx; uint8_t* base; uint32_t object, racer; bool on;
+        ~After() { if(on) chaos_drain(ctx,base,object,racer,false); }
+    } after{ctx,base,drain_object,drain_racer,drains};
     if(threshold && memory.load<uint32_t>(ctx.r3.u32+52)==0) {
         const uint32_t racer=ctx.r4.u32;
         const int32_t rings=int32_t(memory.load<uint32_t>(racer+2180));
